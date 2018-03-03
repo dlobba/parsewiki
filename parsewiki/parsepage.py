@@ -2,18 +2,6 @@ import mwparserfromhell as pfh
 import json
 import copy
 
-def load_infoboxes(infobox_source_file):
-    """Retrieve list of templates representing infoboxes from
-    file.""" 
-    infoboxes = set()
-    with open(infobox_source_file, "r") as infobox_fh:
-        for line in infobox_fh:
-            infoboxes.add(line.strip())
-    return infoboxes
-
-infobox_file = "template.txt" # these must be moved somewhere else
-infoboxes = load_infoboxes(infobox_file)
-
 class Token:
     """Class used to label the information just parsed
     and to address further processing."""

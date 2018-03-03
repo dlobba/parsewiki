@@ -1,5 +1,7 @@
-# virtualenv
+# emacs
+*~
 
+# virtualenv
 bin/
 include/
 pip-selfcheck.json
