@@ -277,9 +277,9 @@ def parse_node(current_node, infoboxes=None, handled_template=None):
         return Token.IGNORE, parse_as_text_chunk(current_node)
 
 
-def parse_param(source_param):
+def parse_param(source_param, infoboxes=None):
     """Parse infobox parameters' wikicode.
-    
+
     Each wikicode is parsed in the same fashion as for the page
     wikicode.
 
