@@ -97,13 +97,8 @@ class Page:
                                       page.word_count))
             elif info_type == Token.INFOBOX:
                 if not page.is_struct_freezed():
-                    parameters, entities = value
-                    for name,value in parameters.items():
-                        if not entities:
-                            page.struct[name] = (value, None)
-                        else:
-                            for entity in entities:
-                                page.struct[name] = (value, entity)
+                    for name,value in value.items():
+                        page.struct[name] = value
                     page.freeze_struct()
             elif info_type == Token.WIKICODE:
                 nodes = value.nodes + nodes
@@ -249,14 +244,17 @@ def is_infobox(template_name):
     return template_name.startswith("Infobox")
     
 def parse_infobox(infobox):
-    """Return the set of entities and the parameters found
+    """Return the the parameters found
     in the infobox."""
-    entities = set()
     parameters = dict()
     for param in infobox.params:
-        text = parse_param(param.value)
-        param_name = str(param.name)         # force str type
-        parameters[param_name] = text
+        text, entities = parse_param(param.value)
+        param_name = str(param.name).strip()         # force str type
+        if len(entities) > 0:
+            for entity in entities:
+                parameters[param_name] = (text, entity)
+        else:
+            parameters[param_name] = (text, None)
     return parameters
 
 def parse_magic_word(template):
@@ -426,7 +424,6 @@ def parse_unstruct_wikicode(source_wikicode, infoboxes=None):
 
 def parse_text_only(source_wikicode):
     parsed_wikicode = parse_unstruct_wikicode(source_wikicode)
-    print(parsed_wikicode)
     if not len(parsed_wikicode) > 0:
         return ""
     only_words = [word for word,_ in parsed_wikicode]
