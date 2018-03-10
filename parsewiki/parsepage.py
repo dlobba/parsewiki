@@ -416,16 +416,17 @@ def parse_unstruct_wikicode(source_wikicode, infoboxes=None):
         if info_type == Token.TEXT:
             nested_part.extend([(word, None) for word in value])
         if info_type == Token.WORD:
-            nested_part.extend((value, None))
+            nested_part.append((value, None))
         elif info_type == Token.ENTITY:
             text, url = value
-            nested_part.extend((text, url))
+            nested_part.append((text, url))
         elif info_type == Token.WIKICODE:
             nodes = value.nodes + nodes
     return nested_part
 
 def parse_text_only(source_wikicode):
     parsed_wikicode = parse_unstruct_wikicode(source_wikicode)
+    print(parsed_wikicode)
     if not len(parsed_wikicode) > 0:
         return ""
     only_words = [word for word,_ in parsed_wikicode]
