@@ -3,15 +3,6 @@ import parsepage as pp
 import bz2
 import xml.etree.ElementTree as ET
 
-def load_infoboxes(infobox_source_file):
-    """Retrieve list of templates representing infoboxes from
-    file.""" 
-    infoboxes = set()
-    with open(infobox_source_file, "r") as infobox_fh:
-        for line in infobox_fh:
-            infoboxes.add(line.strip())
-    return infoboxes
-
 def bzip2_page_iter(filename):
     """Given the stream copy all the content
     withing `<page> ... </page>` tags."""
@@ -46,32 +37,31 @@ def bzip2_page_iter(filename):
                 if read is True:
                     wikipage.append(char)
 
-def get_wikipage(xml_wikipage):
+def iter_revisions(xml_wikipage):
     parsed_page = ET.fromstring(xml_wikipage)
     title = parsed_page.find('title').text
-    timestamp = parsed_page.find('revision/timestamp').text
-    plain_wikitext = parsed_page.find('revision/text').text
-    wikitext = pp.pfh.parse(plain_wikitext)
-    page = pp.Page.parse_page(wikitext, title, timestamp)
-    return page
+    for revision in parsed_page.iterfind("revision"):
+        timestamp = revision.find('timestamp').text
+        plain_wikitext = revision.find('text').text
+        wikicode = pp.pfh.parse(plain_wikitext)
+        page = pp.Page.parse_page(wikicode, title, timestamp)
+        yield page
 
 def parse_single_wikipage(filename):
+    """Given a file containing just a single page
+    of wikicode, parse it and return his Page
+    representation."""
     with open(filename, "r") as fh:
         str_content = fh.read()
     content = pp.pfh.parse(str_content)
     mw_page = pp.Page.parse_page(content)
     return mw_page
    
-
 if __name__ == "__main__":
     """
     page = parse_single_wikipage(sys.argv[1])
     print(page.to_json())
     """
-    fh = bz2.open(sys.argv[1], "rt") # read in text mode
-    remainder = ""
     for wikipage in bzip2_page_iter(sys.argv[1]):
-        page = get_wikipage(wikipage)
-        print(page.to_json())
-
-    
+        for revision in iter_revisions(wikipage):
+            print(revision.to_json())
