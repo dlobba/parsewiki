@@ -386,7 +386,7 @@ def parse_param(source_param, infoboxes=None):
             words.append(text)
         elif info_type == Token.WIKICODE:
             nodes = value.nodes + nodes
-    return str.join("", words), entities
+    return str.join(" ", words), entities
 
 def parse_unstruct_wikicode(source_wikicode, infoboxes=None):
     """Parse nested wikicode, belonging to the unstructured
