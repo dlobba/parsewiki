@@ -1,5 +1,5 @@
 import sys
-import parsepage as pp
+import parsewiki.parsepage as pp
 import bz2
 import xml.etree.ElementTree as ET
 
