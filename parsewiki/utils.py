@@ -1,4 +1,3 @@
-import sys
 import parsewiki.parsepage as pp
 import bz2
 import xml.etree.ElementTree as ET
@@ -77,15 +76,4 @@ def parse_single_wikipage(filename):
     content = pp.pfh.parse(str_content)
     mw_page = pp.Page.parse_page(content)
     return mw_page
-   
-if __name__ == "__main__":
 
-    if sys.argv[2] == "-s":
-        page = parse_single_wikipage(sys.argv[1])
-        print(page.to_json())
-    elif sys.argv[2] == "-c":
-        for wikipage in bzip2_page_iter(sys.argv[1]):
-            for revision in iter_revisions(wikipage):
-                print(revision.to_json())
-    elif sys.argv[2] == "-d":
-        split_bzip2(sys.argv[1], 5, 20, sys.argv[3])
