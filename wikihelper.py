@@ -7,7 +7,7 @@ if __name__ == "__main__":
         print(page.to_json())
     elif sys.argv[2] == "-c":
         for wikipage in pwu.bzip2_page_iter(sys.argv[1]):
-            for revision in pwu.iter_revisions(wikipage):
-                print(revision.to_json())
+            for title, timestamp, page in pwu.iter_revisions(wikipage):
+                print(wikipage_to_json(page, title, timestamp))
     elif sys.argv[2] == "-d":
-        split_bzip2(sys.argv[1], 5, 20, sys.argv[3])
+        pwu.split_bzip2(sys.argv[1], 5, 20, sys.argv[3])

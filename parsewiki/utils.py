@@ -25,7 +25,7 @@ def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
 
 def bzip2_page_iter(filename):
     """Given the stream copy all the content
-    withing `<page> ... </page>` tags."""
+    within `<page> ... </page>` tags."""
     wikipage = []
     read = False
     start_word = "<page"
@@ -63,9 +63,7 @@ def iter_revisions(xml_wikipage):
     for revision in parsed_page.iterfind("revision"):
         timestamp = revision.find('timestamp').text
         plain_wikitext = revision.find('text').text
-        wikicode = pp.pfh.parse(plain_wikitext)
-        page = pp.Page.parse_page(wikicode, title, timestamp)
-        yield page
+        yield (title, timestamp, plain_wikitext)
 
 def parse_single_wikipage(filename):
     """Given a file containing just a single page
@@ -76,4 +74,9 @@ def parse_single_wikipage(filename):
     content = pp.pfh.parse(str_content)
     mw_page = pp.Page.parse_page(content)
     return mw_page
+
+def wikipage_to_json(wikitext, title=None, timestamp=None):
+    content = pp.pfh.parse(wikitext)
+    mw_page = pp.Page.parse_page(content, title, timestamp)
+    return mw_page.to_json()
 
