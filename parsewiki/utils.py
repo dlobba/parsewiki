@@ -57,6 +57,41 @@ def bzip2_page_iter(filename):
                 if read is True:
                     wikipage.append(char)
 
+
+def bz2_memory_page_iter(dump):
+    """Given the dump copy all the content
+    within `<page> ... </page>` tags."""
+    wikipage = []
+    read = False
+    start_word = "<page"
+    end_word = "</page"
+    searched_word = start_word
+    tmp = ""
+    for line in bz2.decompress(dump):
+        for char in line:
+            tmp += char
+            if not searched_word.startswith(tmp):
+                tmp = ""
+            else:
+                if tmp == start_word:
+                    read = True
+                    start_word_char = [c for c in start_word]
+                    # "e" is been reading now, so [:-1]
+                    wikipage.extend(start_word_char[:-1])
+                    searched_word = end_word
+                    tmp = ""
+                elif end_word == tmp:
+                    read = False
+                    wikipage.extend(("e", ">"))
+                    searched_word = start_word
+                    # return partial result and reset
+                    # objective
+                    yield str.join("", wikipage)
+                    wikipage = []
+            if read is True:
+                wikipage.append(char)
+
+
 def iter_revisions(xml_wikipage):
     parsed_page = ET.fromstring(xml_wikipage)
     title = parsed_page.find('title').text
@@ -79,4 +114,3 @@ def wikipage_to_json(wikitext, title=None, timestamp=None):
     content = pp.pfh.parse(wikitext)
     mw_page = pp.Page.parse_page(content, title, timestamp)
     return mw_page.to_json()
-

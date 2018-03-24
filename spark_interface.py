@@ -1,9 +1,13 @@
+import findspark
+findspark.init("/home/gabriel/Scrivania/UNI/Master/17-18/BigDataSocialNetwork/spark-2.2.0-bin-hadoop2.7")
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
 import parsewiki.utils as pwu
+import requests
 import json
 import sys
+import md5
 
 # TODO: search for what those True values are meant for
 schema = StructType([\
@@ -26,7 +30,7 @@ def get_wikipedia_chunk(bzip2_file, max_numpage=20, max_iteration=None):
     num_iteration = 0
     num_page = 0
     pages = []
-    for wikipage in pwu.bzip2_page_iter(bzip2_file):
+    for wikipage in pwu.bz2_memory_page_iter(bzip2_file):
         for revision in pwu.iter_revisions(wikipage):
             num_page += 1
             pages.append(revision)
@@ -59,17 +63,19 @@ def collect_links(json_page):
     for un_sp in page['unstructured_part']:
         results.append((title, un_sp[1]))
     return [result for result in results if result[1] is not None]
-    
+
 
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
     pages, each chunk is processed within an RDD in order
     to parallelize the process of conversion into json files.
-    """    
+    """
     spark = SparkSession.builder\
                         .master("local")\
                         .appName("WikiCrunching")\
                         .config("spark.executor.memory", "1g")\
+                        .config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
+                        .config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
                         .getOrCreate()
 
     # conf = SparkConf()
@@ -78,32 +84,51 @@ if __name__ == "__main__":
     # conf.set("spark.executor.memory", "1g")
     # sc = SparkContext(conf=conf)
     sc = spark.sparkContext
-    
-    pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-    for chunk in get_wikipedia_chunk(sys.argv[1], max_numpage=20, max_iteration=3):
-        rdd = sc.parallelize(chunk)
-        json_text_rdd = rdd.map(jsonify)
-        # Note: here json_text_rdd contains
-        # one line of json for each wikipage
-        # so it's not a problem either if we
-        # would like to work on it as a single
-        # line or if we want to parse is as a
-        # single line json string (single line json
-        # and multiline json are treated differently
-        # by spark)
+    pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
+    json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
 
-        # json_df = spark.read.json(json_text_rdd)
-        # z = json_df.select('title').rdd.collect()
-        # for i in z:
-        #     print(i)
+    wiki_version = "20180201"
+    status_url = "http://wikimedia.bytemark.co.uk/wikidatawiki/"+wiki_version+"/dumpstatus.json"
+    status_json = requests.get(status_url).json()
+    dumps = status_json['jobs']['articlesdump'] # testing dataset (no revision)
+    #dumps = status_json['jobs']['metahistory7zdump'] # full dataset (70TB)
+    if dumps['status'] != "done":
+        print("Dump not ready\n")
+        exit(-1)
+    files = []
+    for key in dumps['files'].keys():
+        files.append({'url': dumps['files'][key]['url'], 'md5': dumps['files'][key]['md5'], 'size': dumps['files'][key]['size']})
+    files.sort(key=lambda file: file['size'])
 
-        # try to read each line individually
-        current_pair_rdd = json_text_rdd.flatMap(collect_links)
+    for dump in files[:1]: #remove [:1] to downoad whole wiki
+        url = "http://wikimedia.bytemark.co.uk"+dump['url']
+        bz2_dump = requests.get(url).content
+        if md5.new(bz2_dump).hexdigest() != dump['md5']:
+            break #TODO: MANAGE ERRORS
+        #bz2_dump = open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'r').read()
+        for chunk in get_wikipedia_chunk(bz2_dump, max_numpage=20, max_iteration=3):
+            rdd = sc.parallelize(chunk)
+            #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
+            json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
+            # Note: here json_text_rdd contains
+            # one line of json for each wikipage
+            # so it's not a problem either if we
+            # would like to work on it as a single
+            # line or if we want to parse is as a
+            # single line json string (single line json
+            # and multiline json are treated differently
+            # by spark)
 
-        # TODO: be sure that by doing this it would still work
-        # on clusters, since we are augmenting an rdd by
-        # itself...
-        pairs_rdd = sc.union([pairs_rdd, current_pair_rdd])
+            # json_df = spark.read.json(json_text_rdd)
+            # z = json_df.select('title').rdd.collect()
+            # for i in z:
+            #     print(i)
 
-    pairs_csv = pairs_rdd.map(lambda title_link_pair: str.join(";", title_link_pair))
-    pairs_csv.saveAsTextFile("../out")
+            # try to read each line individually
+            pair_rdd = pair_rdd.union(json_text_rdd.flatMap(collect_links))
+    #pairs_csv = pair_rdd.map(lambda title_link_pair: str.join(";", title_link_pair))
+    pair_list = pair_rdd.collect()
+    for i in pair_list:
+        print i
+    json_text = json_text_rdd.collect()
+    print len(json_text)
