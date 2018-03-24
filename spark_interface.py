@@ -6,8 +6,8 @@ from pyspark.sql.types import StructType, StructField, StringType
 import parsewiki.utils as pwu
 import requests
 import json
+import hashlib
 import sys
-import md5
 
 # TODO: search for what those True values are meant for
 schema = StructType([\
@@ -101,11 +101,12 @@ if __name__ == "__main__":
     files.sort(key=lambda file: file['size'])
 
     for dump in files[:1]: #remove [:1] to downoad whole wiki
-        url = "http://wikimedia.bytemark.co.uk"+dump['url']
-        bz2_dump = requests.get(url).content
-        if md5.new(bz2_dump).hexdigest() != dump['md5']:
-            break #TODO: MANAGE ERRORS
-        #bz2_dump = open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'r').read()
+        # url = "http://wikimedia.bytemark.co.uk"+dump['url']
+        # bz2_dump = requests.get(url).content
+        # if hashlib.md5(bz2_dump).hexdigest() != dump['md5']: #fix it using haslib
+        #     break #TODO: MANAGE ERRORS
+        with open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'rb') as dump:
+            bz2_dump = dump.read()
         for chunk in get_wikipedia_chunk(bz2_dump, max_numpage=20, max_iteration=3):
             rdd = sc.parallelize(chunk)
             #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
@@ -129,6 +130,6 @@ if __name__ == "__main__":
     #pairs_csv = pair_rdd.map(lambda title_link_pair: str.join(";", title_link_pair))
     pair_list = pair_rdd.collect()
     for i in pair_list:
-        print i
+        print(i)
     json_text = json_text_rdd.collect()
-    print len(json_text)
+    print(len(json_text))
