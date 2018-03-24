@@ -67,7 +67,6 @@ def bz2_memory_page_iter(dump):
     end_word = "</page"
     searched_word = start_word
     tmp = ""
-    print(type(bz2.decompress(dump).decode()))
     for line in bz2.decompress(dump).decode():
         for char in line:
             tmp += char

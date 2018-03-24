@@ -100,17 +100,18 @@ if __name__ == "__main__":
         files.append({'url': dumps['files'][key]['url'], 'md5': dumps['files'][key]['md5'], 'size': dumps['files'][key]['size']})
     files.sort(key=lambda file: file['size'])
 
-    for dump in files[:1]: #remove [:1] to downoad whole wiki
-        # url = "http://wikimedia.bytemark.co.uk"+dump['url']
-        # bz2_dump = requests.get(url).content
-        # if hashlib.md5(bz2_dump).hexdigest() != dump['md5']: #fix it using haslib
-        #     break #TODO: MANAGE ERRORS
-        with open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'rb') as dump:
-            bz2_dump = dump.read()
-        for chunk in get_wikipedia_chunk(bz2_dump, max_numpage=20, max_iteration=3):
+    for dump in files[:2]: #remove [:1] to downoad whole wiki
+        url = "http://wikimedia.bytemark.co.uk"+dump['url']
+        bz2_dump = requests.get(url).content
+        if hashlib.md5(bz2_dump).hexdigest() != dump['md5']: #fix it using haslib
+            break #TODO: MANAGE ERRORS
+        # with open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'rb') as dump:
+        #     bz2_dump = dump.read()
+        for chunk in get_wikipedia_chunk(bz2_dump, max_numpage=20, max_iteration=10):
             rdd = sc.parallelize(chunk)
             #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
-            json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
+            json_text_rdd = rdd.map(jsonify)
+            #json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
             # Note: here json_text_rdd contains
             # one line of json for each wikipage
             # so it's not a problem either if we
