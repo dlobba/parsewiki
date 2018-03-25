@@ -1,8 +1,10 @@
-import parsewiki.parsepage as pp
 import bz2
 import xml.etree.ElementTree as ET
+import parsewiki.parsepage as pp
 
 def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
+    """Given a bz2 file, split it into several bz2 files,
+    each one with a given maximum number of pages."""
     page_count = 0
     iteration_count = 0
     chunks = []
@@ -23,51 +25,17 @@ def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
         if iteration_count >= max_iteration:
             break
 
-def bzip2_page_iter(filename):
-    """Given the stream copy all the content
-    within `<page> ... </page>` tags."""
+def page_iter(text_stream):
+    """Given a generic text stream,
+    copy all the content within `<page> ... </page>`
+    tags."""
     wikipage = []
     read = False
     start_word = "<page"
     end_word = "</page"
     searched_word = start_word
     tmp = ""
-    with bz2.open(filename, "rt") as fh:
-        for line in fh:
-            for char in line:
-                tmp += char
-                if not searched_word.startswith(tmp):
-                    tmp = ""
-                else:
-                    if tmp == start_word:
-                        read = True
-                        start_word_char = [c for c in start_word]
-                        # "e" is been reading now, so [:-1]
-                        wikipage.extend(start_word_char[:-1])
-                        searched_word = end_word
-                        tmp = ""
-                    elif end_word == tmp:
-                        read = False
-                        wikipage.extend(("e", ">"))
-                        searched_word = start_word
-                        # return partial result and reset
-                        # objective
-                        yield str.join("", wikipage)
-                        wikipage = []
-                if read is True:
-                    wikipage.append(char)
-
-
-def bz2_memory_page_iter(dump):
-    """Given the dump copy all the content
-    within `<page> ... </page>` tags."""
-    wikipage = []
-    read = False
-    start_word = "<page"
-    end_word = "</page"
-    searched_word = start_word
-    tmp = ""
-    for line in bz2.decompress(dump).decode():
+    for line in text_stream:
         for char in line:
             tmp += char
             if not searched_word.startswith(tmp):
@@ -91,8 +59,28 @@ def bz2_memory_page_iter(dump):
             if read is True:
                 wikipage.append(char)
 
+def bzip2_page_iter(bz2_filename):
+    """Given a bzip2 filename,
+    copy all the content within `<page> ... </page>`
+    tags."""
+    with bz2.open(bz2_filename, "rt") as bz2_fh:
+        for page in  page_iter(bz2_fh):
+            yield page
+
+def bzip2_memory_page_iter(stream_dump):
+    """Given a streaming dump, decode it and
+    retrieve the pages it contains."""
+    decoded_dump = bzip2.decompress(stream_dump).decode()
+    for page in page_iter(decoded_dump):
+        yield page
 
 def iter_revisions(xml_wikipage):
+    """Given a wikidump page structure, return
+    all the given revisions inside it.
+
+    Notes:
+      The number of revisions within a page can
+      be very large..."""
     parsed_page = ET.fromstring(xml_wikipage)
     title = parsed_page.find('title').text
     for revision in parsed_page.iterfind("revision"):
