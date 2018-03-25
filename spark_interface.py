@@ -14,6 +14,7 @@ from pyspark.sql.types import StructType, StructField, StringType
 class MD5IntegrityException(Exception): pass
 
 #findspark.init("/home/gabriel/Scrivania/UNI/Master/17-18/BigDataSocialNetwork/spark-2.2.0-bin-hadoop2.7")
+logging.getLogger().setLevel(logging.INFO)
 
 # TODO: search for what those True values are meant for
 schema = StructType([\
@@ -121,14 +122,13 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
     # notice that the filename is the same for all the dumps.
     # So only the last dump is kept.
     temp_filename = "/tmp/temp_dump.bz2" 
-    #remove [:1] to downoad whole wiki
     for dump in files[:max_dump]:
         url = endpoint + dump['url']
-        print(url)
+        logging.info("Downloading dump: {}".format(url))
         bz2_dump = requests.get(url).content
         # check dump integrity
         if hashlib.md5(bz2_dump).hexdigest() != dump['md5']:
-            raise MD5IntegrityException("The dump download has a wrong MD5 value.")
+            raise MD5IntegrityException("The dump downloaded has a wrong MD5 value.")
         logging.info("Correctly downloaded dump: {}".format(dump['url']))
         
         # with open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'rb') as dump:
@@ -153,6 +153,9 @@ if __name__ == "__main__":
                         .config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
                         .config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
                         .getOrCreate()
+                        #.config("spark.executor.memory", "8g")\
+                        #.config("spark.executor.instances", "8")\
+                        #.config("spark.executor.cores", "1")\
     sc = spark.sparkContext
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
@@ -189,10 +192,11 @@ if __name__ == "__main__":
 
     wiki_version = "20180201"
     # in this way each dump is first stored into
-    # a temporary file, set False to process it in memory
-    for dump in get_online_dump(wiki_version, True, 2):
-        print("dump downloaded, currently processing....")
-        for chunk in get_wikipedia_chunk(temp_filename, max_numpage=20, max_iteration=1):
+    # a temporary file, set True to process it in memory
+    for dump in get_online_dump(wiki_version, 20, False):
+        print("HERE: dump downloaded, currently processing....")
+        for chunk in get_wikipedia_chunk(dump, max_numpage=20, max_iteration=3):
+            
             rdd = sc.parallelize(chunk)
             #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
             json_text_rdd = rdd.map(jsonify)
