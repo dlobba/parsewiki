@@ -70,7 +70,7 @@ def bzip2_page_iter(bz2_filename):
 def bzip2_memory_page_iter(stream_dump):
     """Given a streaming dump, decode it and
     retrieve the pages it contains."""
-    decoded_dump = bzip2.decompress(stream_dump).decode()
+    decoded_dump = bz2.decompress(stream_dump).decode()
     for page in page_iter(decoded_dump):
         yield page
 
