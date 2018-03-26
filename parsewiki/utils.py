@@ -1,4 +1,5 @@
 import bz2
+import logging
 import xml.etree.ElementTree as ET
 import parsewiki.parsepage as pp
 
@@ -78,12 +79,22 @@ def iter_revisions(xml_wikipage):
     """Given a wikidump page structure, return
     all the given revisions inside it.
 
+    If the revision is not of type
+    `text/x-wiki` then it won't be taken
+    into account.
+
     Notes:
       The number of revisions within a page can
       be very large..."""
     parsed_page = ET.fromstring(xml_wikipage)
     title = parsed_page.find('title').text
     for revision in parsed_page.iterfind("revision"):
+        content_format = revision.find('format').text.strip()
+        if content_format != "text/x-wiki":
+            logging.info("Incorrect content format found, " +\
+                          "it will be **ignored**" +\
+                          "found {}".format(content_format))
+            break
         timestamp = revision.find('timestamp').text
         plain_wikitext = revision.find('text').text
         yield (title, timestamp, plain_wikitext)
