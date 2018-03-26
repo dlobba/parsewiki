@@ -153,7 +153,10 @@ if __name__ == "__main__":
     spark = SparkSession.builder\
                         .master("local")\
                         .appName("WikiCrunching")\
-                        .config("spark.executor.memory", "1g")\
+                        .config("spark.executor.memory", "10g")\
+                        .config("spark.executor.instances", "4")\
+                        .config("spark.executor.cores", "1")\
+                        .config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1")\
                         .config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
                         .config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
                         .getOrCreate()
@@ -164,55 +167,24 @@ if __name__ == "__main__":
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-    """
-    for chunk in get_wikipedia_chunk(sys.argv[1], max_numpage=20, max_iteration=3):
-        rdd = sc.parallelize(chunk)
-        json_text_rdd = rdd.map(jsonify)
-        # Note: here json_text_rdd contains
-        # one line of json for each wikipage
-        # so it's not a problem either if we
-        # would like to work on it as a single
-        # line or if we want to parse is as a
-        # single line json string (single line json
-        # and multiline json are treated differently
-        # by spark)
-
-        # json_df = spark.read.json(json_text_rdd)
-        # z = json_df.select('title').rdd.collect()
-        # for i in z:
-        #     print(i)
-
-        # try to read each line individually
-        current_pair_rdd = json_text_rdd.flatMap(collect_links)
-
-        # TODO: be sure that by doing this it would still work
-        # on clusters, since we are augmenting an rdd by
-        # itself...
-        pairs_rdd = sc.union([pairs_rdd, current_pair_rdd])
-
-    pairs_csv = pairs_rdd.map(lambda title_link_pair: str.join(";", title_link_pair))
-    pairs_csv.saveAsTextFile("../out")
-    """
 
     wiki_version = "20180201"
     # in this way each dump is first stored into
     # a temporary file, set True to process it in memory
-    for dump in get_online_dump(wiki_version, 20, False):
+    for dump in get_online_dump(wiki_version, 3, False):
         print("HERE: dump downloaded, currently processing....")
-        for chunk in get_wikipedia_chunk(dump, max_numpage=20, max_iteration=3):
+        for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
 
-            rdd = sc.parallelize(chunk)
-            #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
+            rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
             #json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
             # for i in json_text_rdd.collect():
             #     print(i)
 
             # try to read each line individually
-            pair_rdd = pair_rdd.union(json_text_rdd.flatMap(collect_links))
-    #pairs_csv = pair_rdd.map(lambda title_link_pair: str.join(";", title_link_pair))
-    pair_list = pair_rdd.collect()
-    for i in pair_list:
-        print(i)
-    json_text = json_text_rdd.collect()
-    print(len(json_text))
+            pair_rdd = json_text_rdd.flatMap(collect_links)
+            try:
+                links = spark.createDataFrame(pair_rdd, ["page", "link"])
+                links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
+            except ValueError:
+                logging.warning("Empty RDD.")
