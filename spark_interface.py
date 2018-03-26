@@ -4,7 +4,6 @@ import hashlib
 import logging
 
 import requests
-import findspark
 import parsewiki.utils as pwu
 
 from pyspark import SparkConf, SparkContext
@@ -13,7 +12,6 @@ from pyspark.sql.types import StructType, StructField, StringType
 
 class MD5IntegrityException(Exception): pass
 
-#findspark.init("/home/gabriel/Scrivania/UNI/Master/17-18/BigDataSocialNetwork/spark-2.2.0-bin-hadoop2.7")
 logging.getLogger().setLevel(logging.INFO)
 
 # TODO: search for what those True values are meant for
@@ -118,26 +116,32 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
     if max_dump is None:
         max_dump = len(files)
 
-    # filename used in case memory is set to False,
-    # notice that the filename is the same for all the dumps.
-    # So only the last dump is kept.
-    temp_filename = "/tmp/temp_dump.bz2" 
     for dump in files[:max_dump]:
-        url = endpoint + dump['url']
-        logging.info("Downloading dump: {}".format(url))
-        bz2_dump = requests.get(url).content
-        # check dump integrity
-        if hashlib.md5(bz2_dump).hexdigest() != dump['md5']:
-            raise MD5IntegrityException("The dump downloaded has a wrong MD5 value.")
-        logging.info("Correctly downloaded dump: {}".format(dump['url']))
-        
-        # with open("wikidatawiki-20171103-pages-articles19.xml-p19072452p19140743.bz2", 'rb') as dump:
-        #     bz2_dump = dump.read()
-        if memory is False:
-            with open(temp_filename, "wb") as bz2_fh:
-                bz2_fh.write(bz2_dump)
-            yield temp_filename
+        if not memory:
+            # Try to open the file matching with the md5sum of the resource.
+            # If it does not exist download it and write in the file as it's md5sum
+            filename_r = "/tmp/wikidump_" + dump['md5']
+            try:
+                with open(filename_r, "rt") as bz2_fh:
+                        # If the file exists we are sure that it is not corrupted.
+                        logging.info("Dump already downloaded, skipping download and reloading it.")
+                        yield filename_r
+            except FileNotFoundError:
+                url = endpoint + dump['url']
+                logging.info("Downloading dump: {}".format(url))
+                bz2_dump = requests.get(url).content
+                md5sum = hashlib.md5(bz2_dump).hexdigest()
+                if md5sum != dump['md5']:
+                    raise MD5IntegrityException("The dump downloaded has a wrong MD5 value.")
+                filename_w = "/tmp/wikidump_" + md5sum
+                with open(filename_w, "wb") as bz2_fh:
+                    bz2_fh.write(bz2_dump)
+                yield filename_w
+
         else:
+            url = endpoint + dump['url']
+            logging.info("Downloading dump: {}".format(url))
+            bz2_dump = requests.get(url).content
             yield bz2_dump
 
 
@@ -196,13 +200,13 @@ if __name__ == "__main__":
     for dump in get_online_dump(wiki_version, 20, False):
         print("HERE: dump downloaded, currently processing....")
         for chunk in get_wikipedia_chunk(dump, max_numpage=20, max_iteration=3):
-            
+
             rdd = sc.parallelize(chunk)
             #rdd.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
             json_text_rdd = rdd.map(jsonify)
             #json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
-            for i in json_text_rdd.collect():
-                print(i)
+            # for i in json_text_rdd.collect():
+            #     print(i)
 
             # try to read each line individually
             pair_rdd = pair_rdd.union(json_text_rdd.flatMap(collect_links))
