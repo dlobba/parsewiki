@@ -337,7 +337,14 @@ def parse_node(current_node, infoboxes=None):
         return Token.WORD, parse_html_entity(current_node)
                          
     elif type(current_node) == pfh.nodes.external_link.ExternalLink:
-        return Token.ENTITY, parse_external_link(current_node)
+        # divide the title into words and append the url,
+        # then treat them as they were text
+        title, url = parse_external_link(current_node)
+        current_node.value = title
+        result = parse_text(current_node)
+        if title != url:
+            result.append(url)
+        return Token.TEXT, result
 
     elif type(current_node) == pfh.nodes.template.Template:
         # force casting to str (Wikicode otherwise) in
