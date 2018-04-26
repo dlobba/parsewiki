@@ -63,18 +63,22 @@ def jsonify(wiki_tuple):
     return pwu.wikipage_to_json(page, title, timestamp)
 
 def collect_links(json_page):
-    """Return a tuple (page, link)
+    """Return a tuple (page, timestamp, link)
     for each link found in page."""
     results = []
     page = json.loads(json_page)
     title = page['title']
+    timestamp = page['timestamp']
     # structured_part: [name, text, link]
     for sp in page['structured_part']:
-        results.append((title, sp[2]))
+        if sp[2] is not None:
+            results.append((title, sp[2]))
     # unstructured_part: [key, link, position]
     for un_sp in page['unstructured_part']:
-        results.append((title, un_sp[1]))
-    return [result for result in results if result[1] is not None]
+        if un_sp[1] is not None:
+            results.append((title, un_sp[1]))
+    #return [result for result in results if result[1] is not None]
+    return results
 
 def get_online_dump(wiki_version, max_dump=None, memory=False):
     """Download a specific wikipedia version dumps online,
