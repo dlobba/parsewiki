@@ -7,6 +7,8 @@ import logging
 import requests
 import parsewiki.utils as pwu
 
+from collections import OrderedDict
+from copy import deepcopy
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
@@ -204,13 +206,13 @@ if __name__ == "__main__":
                         .config("spark.executor.memory", "10g")\
                         .config("spark.executor.instances", "4")\
                         .config("spark.executor.cores", "1")\
-                        .config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1")\
-                        .config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
-                        .config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
+                        .config("spark.executor.memory", "1g")\
+                        .config("spark.executor.instances", "1")\
+                        .config("spark.executor.cores", "1")\
                         .getOrCreate()
-                        #.config("spark.executor.memory", "1g")\
-                        #.config("spark.executor.instances", "1")\
-                        #.config("spark.executor.cores", "1")\
+                        #.config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1")\
+                        #.config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
+                        #.config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
                        
     sc = spark.sparkContext
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
@@ -272,10 +274,10 @@ if __name__ == "__main__":
             entity_encoding_rdd = joined_rdd.map(encode_timestamp)
             
 
-            # q was used here for debug
-            #with open("/home/spark/Programming/test/out_{}.txt".format(q), "w") as fh:
-            #    for i in joined_rdd.collect():
-            #        fh.write(str(i) + "\n")
+            #q is used here for debug
+            with open("/tmp/out_{}.txt".format(q), "w") as fh:
+                for i in entity_encoding_rdd.collect():
+                    fh.write(str(i) + "\n")
             q += 1
 
             #try:
