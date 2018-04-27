@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import hashlib
@@ -72,13 +73,46 @@ def collect_links(json_page):
     # structured_part: [name, text, link]
     for sp in page['structured_part']:
         if sp[2] is not None:
-            results.append((title, sp[2]))
+            results.append((title, timestamp, sp[2]))
     # unstructured_part: [key, link, position]
     for un_sp in page['unstructured_part']:
         if un_sp[1] is not None:
-            results.append((title, un_sp[1]))
+            results.append((title, timestamp, un_sp[1]))
     #return [result for result in results if result[1] is not None]
     return results
+
+def encode_timestamp(entry):
+    """Given an entry ((page, link), (changes_timestamps, page_timestamps))
+    return an entry with same key (page, link) with a
+    binary string which encodes the presence of the link in the
+    page timestamps followed by the ordered set of timestamps for
+    that page.
+
+
+    Example:
+      Suppose a link is present in 2017-24-1 until 2018-23-2
+      and the page has the timestamps from 2016-31-1 up to
+      2018-04-1 with 6 entries in between (2017-24-1 and
+      2018-23-2 are in between by definition)
+      then the link binary string is:
+      0-1-1-1-1-0
+
+      In this way it's possible to infer that the link wasn't
+      there in the first timestamp, then appeared for a while
+      and the disappeared.
+    """
+    change_ts, page_ts = entry[1]
+    # avoid side effects on the rdd
+    page_ts = deepcopy(page_ts)
+
+    # it would be waaay better for the sort process
+    # to be made by rdd operations...
+    page_ts.sort()
+    out = OrderedDict({key: 0 for key in page_ts})
+    for change in change_ts:
+        out[change] = 1
+    return (entry[0], (page_ts, list(out.values())))
+       
 
 def get_online_dump(wiki_version, max_dump=None, memory=False):
     """Download a specific wikipedia version dumps online,
@@ -148,7 +182,17 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
             bz2_dump = requests.get(url).content
             yield bz2_dump
 
+def get_offline_dump(dump_folder):
+    dump_files = [dump for dump in os.listdir(dump_folder) \
+                  if dump[-4:] == ".bz2"]
+    for dump in dump_files:
+        yield dump_folder + os.sep + dump
 
+def to_csv(row):
+    page, ts, link = row
+    return str.join("\t", [page, ts, link])
+    
+            
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
     pages, each chunk is processed within an RDD in order
@@ -164,9 +208,10 @@ if __name__ == "__main__":
                         .config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
                         .config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
                         .getOrCreate()
-                        #.config("spark.executor.memory", "8g")\
-                        #.config("spark.executor.instances", "8")\
+                        #.config("spark.executor.memory", "1g")\
+                        #.config("spark.executor.instances", "1")\
                         #.config("spark.executor.cores", "1")\
+                       
     sc = spark.sparkContext
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
@@ -175,20 +220,66 @@ if __name__ == "__main__":
     wiki_version = "20180201"
     # in this way each dump is first stored into
     # a temporary file, set True to process it in memory
-    for dump in get_online_dump(wiki_version, 3, False):
-        print("HERE: dump downloaded, currently processing....")
+    # get_online_dump(wiki_version, 3, False)
+    get_dump = lambda: get_offline_dump("/home/spark/Programming/test")
+    q = 0
+    for dump in get_dump():
         for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
 
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
-            #json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
-            # for i in json_text_rdd.collect():
-            #     print(i)
-
             # try to read each line individually
-            pair_rdd = json_text_rdd.flatMap(collect_links)
-            try:
-                links = spark.createDataFrame(pair_rdd, ["page", "link"])
-                links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
-            except ValueError:
-                logging.warning("Empty RDD.")
+            link_rdd = json_text_rdd.flatMap(collect_links)
+
+            # rdd union
+            json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
+
+            # TASK 1: entity diff
+            # rearrange row values in order to have
+            # a composite key made of (page, link) entries.
+            # In addition remove double entries (with distinct).
+            page_link_rdd = link_rdd.map(lambda entry:\
+                                         ((entry[0], entry[2]), entry[1]))\
+                                         .distinct()
+            # group entries having same composite key
+            # and flat the values obtained.
+            # We now have all timestamps where a particular
+            # link in a page has been changed.
+            versions_rdd = page_link_rdd.groupByKey()\
+                                        .mapValues(lambda entry_vals: list(entry_vals))
+
+            # create a paird rdd <page, (link, tss)> which
+            # will be used to join with the timestamp rdd.
+            page_link_tss_rdd = versions_rdd.map(lambda entry: (entry[0][0], (entry[0][1], entry[1])))
+
+            # We now want to have all timestamps a page has.
+            # First, we collect all the timestamps associated to a page
+            ts_list_rdd = link_rdd.map(lambda entry: (entry[0], entry[1])).distinct()
+            page_ts_rdd = ts_list_rdd.groupByKey().mapValues(lambda entry_vals: list(entry_vals))
+
+            # We want to expand the page_link_tss rdd with all timestamps
+            # a page has, so that we can then further be able to
+            # track the appearance and disappearance of a link on the timeline.
+            #
+            # We then rearrange the rdd
+            joined_rdd = page_link_tss_rdd.\
+                         join(page_ts_rdd)\
+                         .map(lambda entry: (\
+                                             (entry[0], entry[1][0][0]),\
+                                             (entry[1][0][1], entry[1][1])))
+            # finally we map the joined rdd so that
+            # we make a row in the timestamp matrix.
+            entity_encoding_rdd = joined_rdd.map(encode_timestamp)
+            
+
+            # q was used here for debug
+            #with open("/home/spark/Programming/test/out_{}.txt".format(q), "w") as fh:
+            #    for i in joined_rdd.collect():
+            #        fh.write(str(i) + "\n")
+            q += 1
+
+            #try:
+            #    links = spark.createDataFrame(pair_rdd, ["page", "link"])
+            #    links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
+            #except ValueError:
+            #    logging.warning("Empty RDD.")
