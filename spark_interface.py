@@ -16,8 +16,14 @@ from pyspark.sql.types import StructType, StructField, StringType
 class MD5IntegrityException(Exception): pass
 
 logging.getLogger().setLevel(logging.INFO)
+ 
+def arg_sort(iterable):
+    """Return an array with the indexes that
+    would make the given array sorted following
+    the ascending order."""
+    return sorted(range(len(iterable)), key=lambda x: iterable[x])
 
-# TODO: search for what those True values are meant for
+# If True then it's nullable
 schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
@@ -83,13 +89,59 @@ def collect_links(json_page):
     #return [result for result in results if result[1] is not None]
     return results
 
+def collect_words(json_page):
+    """Return a tuple (page, timestamp, word)
+    for each word found in the unstructured part
+    of the page."""
+    results = []
+    words = set()
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    # unstructured_part: [word, link, position]
+    for un_sp in page['unstructured_part']:
+        words.add(un_sp[0])
+    if not len(words):
+        return [(title, timestamp, None)]
+    for word in words:
+        results.append((title, timestamp, word))
+    return results
+
+def words_diff(iterable):
+    """Given an iterable set containing timestamps
+    for the same page, order them according to the timestamp,
+    pick the timestamp two by two in sequence and compute
+    the diff over the set of words they contain.
+
+    Return:
+      A tuple <timestamp, words_added, words_removed>
+      for each pair of timestamps considered.
+    """
+    list_iter = list(iterable)
+    timestamps = [value[0] for value in list_iter]
+
+    sorted_ts = arg_sort(timestamps)
+    diff_pairs = [(sorted_ts[t], sorted_ts[t+1]) \
+                  for t in range(len(sorted_ts) - 1)]
+    results = []
+    for pair in diff_pairs:
+        current_index, successive_index = pair
+        current = list_iter[current_index]
+        successive = list_iter[successive_index]
+        current_words = current[1]
+        successive_words = successive[1]
+        diff_title = current[0] + "->" + successive[0]
+        words_removed = list(set(current_words) - set(successive_words))
+        words_added = list(set(successive_words) - set(current_words))
+        results.append((diff_title, words_added, words_removed))
+    return results
+
 def encode_timestamp(entry):
     """Given an entry ((page, link), (changes_timestamps, page_timestamps))
     return an entry with same key (page, link) with a
     binary string which encodes the presence of the link in the
     page timestamps followed by the ordered set of timestamps for
     that page.
-
 
     Example:
       Suppose a link is present in 2017-24-1 until 2018-23-2
@@ -177,7 +229,6 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
                 with open(filename_w, "wb") as bz2_fh:
                     bz2_fh.write(bz2_dump)
                 yield filename_w
-
         else:
             url = endpoint + dump['url']
             logging.info("Downloading dump: {}".format(url))
@@ -232,10 +283,7 @@ if __name__ == "__main__":
             json_text_rdd = rdd.map(jsonify)
             # try to read each line individually
             link_rdd = json_text_rdd.flatMap(collect_links)
-
-            # rdd union
-            json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
-
+            """
             # TASK 1: entity diff
             # rearrange row values in order to have
             # a composite key made of (page, link) entries.
@@ -272,13 +320,37 @@ if __name__ == "__main__":
             # finally we map the joined rdd so that
             # we make a row in the timestamp matrix.
             entity_encoding_rdd = joined_rdd.map(encode_timestamp)
-            
+            """
 
-            #q is used here for debug
+            # TASK2
+            # words diff
+            # select all the words within a page and
+            # build a large tuple set
+            words_rdd = json_text_rdd.flatMap(collect_words)
+            pair_words_rdd = words_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
+
+            # collect all words within a page in a single rdd
+            words_page_rdd = pair_words_rdd.groupByKey()\
+                             .mapValues(lambda entry_values: list(entry_values))
+
+            # relax the structure and change the
+            # pair rdd key-value values
+            relaxed_rdd = words_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
+
+            # the new pair rdd will have the following structure:
+            # <page, <timestamp, words>>
+            page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
+            words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(words_diff)
+
+            # q is used here for debug.
+            # write the rdd to several files in /tmp/*
             with open("/tmp/out_{}.txt".format(q), "w") as fh:
-                for i in entity_encoding_rdd.collect():
+                for i in words_diff_rdd.collect():
                     fh.write(str(i) + "\n")
             q += 1
+
+            # rdd union
+            json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
 
             #try:
             #    links = spark.createDataFrame(pair_rdd, ["page", "link"])
