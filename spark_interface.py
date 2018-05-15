@@ -29,29 +29,6 @@ schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
 
-def spark_builder(spark_config):
-    """Build the Spark Session given the hash
-    containing configuration settings.
-    
-    Returns:
-      A SparkSession with the configurations defined in the
-      given Python hash.
-    """
-    APP_NAME = "appName"
-    MASTER = "master"
-    CONFIG = "config"
-    try:
-        builder = SparkSession.builder\
-                              .master(spark_config[MASTER])\
-                              .appName(spark_config[APP_NAME])
-        for param_name, param_value in spark_config[CONFIG].items():
-            builder.config(param_name, param_value)
-        return builder.getOrCreate()
-    except KeyError as ke:
-        logging.error("SPARK-CONF-FILE-ERROR: missing "\
-                      + "required object: {}".format(ke))
-        raise ke
-
 def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
     """Return a bzip2 file containing wikipedia pages in chunks
     of a given number of pages.
@@ -259,6 +236,9 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
             yield bz2_dump
 
 def get_offline_dump(dump_folder):
+    """Given a path to the folder containing wikipedia
+    dumpps (in bz2 format), return the
+    path to each dump file"""
     dump_files = [dump for dump in os.listdir(dump_folder) \
                   if dump[-4:] == ".bz2"]
     for dump in dump_files:
@@ -274,28 +254,38 @@ if __name__ == "__main__":
     pages, each chunk is processed within an RDD in order
     to parallelize the process of conversion into json files.
     """
+    # initialization given and CLI arguments management
     args = cu.define_argparse().parse_args()
 
-    dump_dir = None
-    configs = cu.DEFAULT_SPARK_CONFIGURATIONS
+    spark_configs = cu.DEFAULT_SPARK_CONFIGURATIONS
+    online_configs = cu.DEFAULT_ONLINE_CONFIGURATIONS
+    if args.online_conffile:
+        with open(args.online_conffile, "r") as conf_file:
+            online_configs = cu.get_config(conf_file)
+    wiki_version,\
+        process_in_memory,\
+        max_dump = cu.get_online_params(online_configs)
+
+    # if a directory for the dumps is provided then
+    # process all the dumps in it, otherwise
+    # retrieve the dumps online
     if args.dump_dir:
         dump_dir = args.dump_dir
+        get_dump = lambda: get_offline_dump(dump_dir)
+    else:
+        get_dump = lambda: get_online_dump(wiki_version,\
+                                           max_dump,\
+                                           process_in_memory)
     if args.spark_conffile:
-        config_file_path = args.spark_conffile
-        with open(config_file_path, "r") as conf_file:
-            configs = cu.get_spark_config(conf_file)
-
-    spark = spark_builder(configs)
+        with open(args.spark_conffile, "r") as conf_file:
+            spark_configs = cu.get_config(conf_file)
+    
+    spark = cu.spark_builder(SparkSession.builder, spark_configs)
     sc = spark.sparkContext
+
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-
-    wiki_version = "20180201"
-    # in this way each dump is first stored into
-    # a temporary file, set True to process it in memory
-    # get_online_dump(wiki_version, 3, False)
-    get_dump = lambda: get_offline_dump("/home/spark/Programming/test")
     q = 0
     for dump in get_dump():
         for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
