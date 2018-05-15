@@ -9,14 +9,12 @@ SPARK_CONFIG = "config"
 DEFAULT_SPARK_CONFIGURATIONS = {\
                                 "master" : "local",\
                                 "appName" : "WikiCrunching",\
-                                "config" : [\
-	                                    {"spark.executor.memory" : "10g"},\
-	                                    {"spark.executor.instances" : "4"},\
-	                                    {"spark.executor.cores" : "1"},\
-	                                    {"spark.jars.packages" : "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1"},\
-	                                    {"spark.mongodb.input.uri" : "mongodb://127.0.0.1/test.coll"},\
-	                                    {"spark.mongodb.output.uri" : "mongodb://127.0.0.1/test.coll"}\
-                                ]}
+                                "config" : {"spark.executor.memory" : "10g",\
+	                                    "spark.executor.instances" : "4",\
+	                                    "spark.executor.cores" : "1",\
+	                                    "spark.jars.packages" : "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1",\
+	                                    "spark.mongodb.input.uri" : "mongodb://127.0.0.1/test.coll",\
+	                                    "spark.mongodb.output.uri" : "mongodb://127.0.0.1/test.coll"}}
 
 WIKI_VERSION = "wiki-version"
 MEMORY = "process-in-memory"
