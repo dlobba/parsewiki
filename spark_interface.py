@@ -6,6 +6,7 @@ import logging
 
 import requests
 import parsewiki.utils as pwu
+import cli_utils as cu
 
 from collections import OrderedDict
 from copy import deepcopy
@@ -27,6 +28,29 @@ def arg_sort(iterable):
 schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
+
+def spark_builder(spark_config):
+    """Build the Spark Session given the hash
+    containing configuration settings.
+    
+    Returns:
+      A SparkSession with the configurations defined in the
+      given Python hash.
+    """
+    APP_NAME = "appName"
+    MASTER = "master"
+    CONFIG = "config"
+    try:
+        builder = SparkSession.builder\
+                              .master(spark_config[MASTER])\
+                              .appName(spark_config[APP_NAME])
+        for param_name, param_value in spark_config[CONFIG].items():
+            builder.config(param_name, param_value)
+        return builder.getOrCreate()
+    except KeyError as ke:
+        logging.error("SPARK-CONF-FILE-ERROR: missing "\
+                      + "required object: {}".format(ke))
+        raise ke
 
 def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
     """Return a bzip2 file containing wikipedia pages in chunks
@@ -167,7 +191,6 @@ def encode_timestamp(entry):
         out[change] = 1
     return (entry[0], (page_ts, list(out.values())))
        
-
 def get_online_dump(wiki_version, max_dump=None, memory=False):
     """Download a specific wikipedia version dumps online,
     returing each dump.
@@ -251,20 +274,18 @@ if __name__ == "__main__":
     pages, each chunk is processed within an RDD in order
     to parallelize the process of conversion into json files.
     """
-    spark = SparkSession.builder\
-                        .master("local")\
-                        .appName("WikiCrunching")\
-                        .config("spark.executor.memory", "10g")\
-                        .config("spark.executor.instances", "4")\
-                        .config("spark.executor.cores", "1")\
-                        .config("spark.executor.memory", "1g")\
-                        .config("spark.executor.instances", "1")\
-                        .config("spark.executor.cores", "1")\
-                        .getOrCreate()
-                        #.config("spark.jars.packages", "org.mongodb.spark:mongo-spark-connector_2.11:2.2.1")\
-                        #.config("spark.mongodb.input.uri", "mongodb://127.0.0.1/test.coll") \
-                        #.config("spark.mongodb.output.uri", "mongodb://127.0.0.1/test.coll") \
-                       
+    args = cu.define_argparse().parse_args()
+
+    dump_dir = None
+    configs = cu.DEFAULT_SPARK_CONFIGURATIONS
+    if args.dump_dir:
+        dump_dir = args.dump_dir
+    if args.spark_conffile:
+        config_file_path = args.spark_conffile
+        with open(config_file_path, "r") as conf_file:
+            configs = cu.get_spark_config(conf_file)
+
+    spark = spark_builder(configs)
     sc = spark.sparkContext
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
