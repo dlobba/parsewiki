@@ -1,3 +1,4 @@
+import os
 import sys
 import json
 import hashlib
@@ -7,6 +8,8 @@ import requests
 import parsewiki.utils as pwu
 import cli_utils as cu
 
+from collections import OrderedDict
+from copy import deepcopy
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
@@ -14,34 +17,17 @@ from pyspark.sql.types import StructType, StructField, StringType
 class MD5IntegrityException(Exception): pass
 
 logging.getLogger().setLevel(logging.INFO)
+ 
+def arg_sort(iterable):
+    """Return an array with the indexes that
+    would make the given array sorted following
+    the ascending order."""
+    return sorted(range(len(iterable)), key=lambda x: iterable[x])
 
-# TODO: search for what those True values are meant for
+# If True then it's nullable
 schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
-
-def spark_builder(spark_config):
-    """Build the Spark Session given the hash
-    containing configuration settings.
-    
-    Returns:
-      A SparkSession with the configurations defined in the
-      given Python hash.
-    """
-    APP_NAME = "appName"
-    MASTER = "master"
-    CONFIG = "config"
-    try:
-        builder = SparkSession.builder\
-                              .master(spark_config[MASTER])\
-                              .appName(spark_config[APP_NAME])
-        for param_name, param_value in spark_config[CONFIG].items():
-            builder.config(param_name, param_value)
-        return builder.getOrCreate()
-    except KeyError as ke:
-        logging.error("SPARK-CONF-FILE-ERROR: missing "\
-                      + "required object: {}".format(ke))
-        raise ke
 
 def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
     """Return a bzip2 file containing wikipedia pages in chunks
@@ -87,19 +73,101 @@ def jsonify(wiki_tuple):
     return pwu.wikipage_to_json(page, title, timestamp)
 
 def collect_links(json_page):
-    """Return a tuple (page, link)
+    """Return a tuple (page, timestamp, link)
     for each link found in page."""
     results = []
     page = json.loads(json_page)
     title = page['title']
+    timestamp = page['timestamp']
     # structured_part: [name, text, link]
     for sp in page['structured_part']:
-        results.append((title, sp[2]))
+        if sp[2] is not None:
+            results.append((title, timestamp, sp[2]))
     # unstructured_part: [key, link, position]
     for un_sp in page['unstructured_part']:
-        results.append((title, un_sp[1]))
-    return [result for result in results if result[1] is not None]
+        if un_sp[1] is not None:
+            results.append((title, timestamp, un_sp[1]))
+    #return [result for result in results if result[1] is not None]
+    return results
 
+def collect_words(json_page):
+    """Return a tuple (page, timestamp, word)
+    for each word found in the unstructured part
+    of the page."""
+    results = []
+    words = set()
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    # unstructured_part: [word, link, position]
+    for un_sp in page['unstructured_part']:
+        words.add(un_sp[0])
+    if not len(words):
+        return [(title, timestamp, None)]
+    for word in words:
+        results.append((title, timestamp, word))
+    return results
+
+def time_diff(iterable):
+    """Given an iterable set containing timestamps
+    for the same page, order them according to the timestamp,
+    pick the timestamp two by two in sequence and compute
+    the diff over the set of items they contain.
+
+    Return:
+      A tuple <timestamp, items_added, items_removed>
+      for each pair of timestamps considered.
+    """
+    list_iter = list(iterable)
+    timestamps = [value[0] for value in list_iter]
+
+    sorted_ts = arg_sort(timestamps)
+    diff_pairs = [(sorted_ts[t], sorted_ts[t+1]) \
+                  for t in range(len(sorted_ts) - 1)]
+    results = []
+    for pair in diff_pairs:
+        current_index, successive_index = pair
+        current = list_iter[current_index]
+        successive = list_iter[successive_index]
+        current_items = current[1]
+        successive_items = successive[1]
+        diff_title = current[0] + "->" + successive[0]
+        items_removed = list(set(current_items) - set(successive_items))
+        items_added = list(set(successive_items) - set(current_items))
+        results.append((diff_title, items_added, items_removed))
+    return results
+
+def encode_timestamp(entry):
+    """Given an entry ((page, link), (changes_timestamps, page_timestamps))
+    return an entry with same key (page, link) with a
+    binary string which encodes the presence of the link in the
+    page timestamps followed by the ordered set of timestamps for
+    that page.
+
+    Example:
+      Suppose a link is present in 2017-24-1 until 2018-23-2
+      and the page has the timestamps from 2016-31-1 up to
+      2018-04-1 with 6 entries in between (2017-24-1 and
+      2018-23-2 are in between by definition)
+      then the link binary string is:
+      0-1-1-1-1-0
+
+      In this way it's possible to infer that the link wasn't
+      there in the first timestamp, then appeared for a while
+      and the disappeared.
+    """
+    change_ts, page_ts = entry[1]
+    # avoid side effects on the rdd
+    page_ts = deepcopy(page_ts)
+
+    # it would be waaay better for the sort process
+    # to be made by rdd operations...
+    page_ts.sort()
+    out = OrderedDict({key: 0 for key in page_ts})
+    for change in change_ts:
+        out[change] = 1
+    return (entry[0], (page_ts, list(out.values())))
+       
 def get_online_dump(wiki_version, max_dump=None, memory=False):
     """Download a specific wikipedia version dumps online,
     returing each dump.
@@ -161,54 +229,164 @@ def get_online_dump(wiki_version, max_dump=None, memory=False):
                 with open(filename_w, "wb") as bz2_fh:
                     bz2_fh.write(bz2_dump)
                 yield filename_w
-
         else:
             url = endpoint + dump['url']
             logging.info("Downloading dump: {}".format(url))
             bz2_dump = requests.get(url).content
             yield bz2_dump
 
+def get_offline_dump(dump_folder):
+    """Given a path to the folder containing wikipedia
+    dumpps (in bz2 format), return the
+    path to each dump file"""
+    dump_files = [dump for dump in os.listdir(dump_folder) \
+                  if dump[-4:] == ".bz2"]
+    for dump in dump_files:
+        yield dump_folder + os.sep + dump
 
+def to_csv(row):
+    page, ts, link = row
+    return str.join("\t", [page, ts, link])
+    
+            
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
     pages, each chunk is processed within an RDD in order
     to parallelize the process of conversion into json files.
     """
-
+    # initialization given and CLI arguments management
     args = cu.define_argparse().parse_args()
 
-    dump_dir = None
-    configs = cu.DEFAULT_SPARK_CONFIGURATIONS
+    spark_configs = cu.DEFAULT_SPARK_CONFIGURATIONS
+    online_configs = cu.DEFAULT_ONLINE_CONFIGURATIONS
+    if args.online_conffile:
+        with open(args.online_conffile, "r") as conf_file:
+            online_configs = cu.get_config(conf_file)
+    wiki_version,\
+        process_in_memory,\
+        max_dump = cu.get_online_params(online_configs)
+
+    # if a directory for the dumps is provided then
+    # process all the dumps in it, otherwise
+    # retrieve the dumps online
     if args.dump_dir:
         dump_dir = args.dump_dir
+        get_dump = lambda: get_offline_dump(dump_dir)
+    else:
+        get_dump = lambda: get_online_dump(wiki_version,\
+                                           max_dump,\
+                                           process_in_memory)
     if args.spark_conffile:
-        config_file_path = args.spark_conffile
-        with open(config_file_path, "r") as conf_file:
-            configs = cu.get_spark_config(conf_file)
-
-    spark = spark_builder(configs)
+        with open(args.spark_conffile, "r") as conf_file:
+            spark_configs = cu.get_config(conf_file)
+    
+    spark = cu.spark_builder(SparkSession.builder, spark_configs)
     sc = spark.sparkContext
+
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-
-    wiki_version = "20180201"
-    # in this way each dump is first stored into
-    # a temporary file, set True to process it in memory
-    for dump in get_online_dump(wiki_version, 3, False):
-        print("HERE: dump downloaded, currently processing....")
+    q = 0
+    for dump in get_dump():
         for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
 
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
-            #json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
-            # for i in json_text_rdd.collect():
-            #     print(i)
+            """
+            # TASK 1: entity diff - method1
+            # rearrange row values in order to have
+            # a composite key made of (page, link) entries.
+            # In addition remove double entries (with distinct).
+            page_link_rdd = link_rdd.map(lambda entry:\
+                                         ((entry[0], entry[2]), entry[1]))\
+                                         .distinct()
+            # group entries having same composite key
+            # and flat the values obtained.
+            # We now have all timestamps where a particular
+            # link in a page has been changed.
+            versions_rdd = page_link_rdd.groupByKey()\
+                                        .mapValues(lambda entry_vals: list(entry_vals))
 
-            # try to read each line individually
-            pair_rdd = json_text_rdd.flatMap(collect_links)
-            try:
-                links = spark.createDataFrame(pair_rdd, ["page", "link"])
-                links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
-            except ValueError:
-                logging.warning("Empty RDD.")
+            # create a paird rdd <page, (link, tss)> which
+            # will be used to join with the timestamp rdd.
+            page_link_tss_rdd = versions_rdd.map(lambda entry: (entry[0][0], (entry[0][1], entry[1])))
+
+            # We now want to have all timestamps a page has.
+            # First, we collect all the timestamps associated to a page
+            ts_list_rdd = link_rdd.map(lambda entry: (entry[0], entry[1])).distinct()
+            page_ts_rdd = ts_list_rdd.groupByKey().mapValues(lambda entry_vals: list(entry_vals))
+
+            # We want to expand the page_link_tss rdd with all timestamps
+            # a page has, so that we can then further be able to
+            # track the appearance and disappearance of a link on the timeline.
+            #
+            # We then rearrange the rdd
+            joined_rdd = page_link_tss_rdd.\
+                         join(page_ts_rdd)\
+                         .map(lambda entry: (\
+                                             (entry[0], entry[1][0][0]),\
+                                             (entry[1][0][1], entry[1][1])))
+            # finally we map the joined rdd so that
+            # we make a row in the timestamp matrix.
+            entity_encoding_rdd = joined_rdd.map(encode_timestamp)
+            """
+            # TASK1
+            # entity diff - method 2
+            links_rdd = json_text_rdd.flatMap(collect_links)
+            pair_links_rdd = links_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
+
+            # collect all links within a page in a single rdd
+            links_page_rdd = pair_links_rdd.groupByKey()\
+                             .mapValues(lambda entry_values: list(entry_values))
+
+            # relax the structure and change the
+            # pair rdd key-value values
+            relaxed_rdd = links_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
+
+            # the new pair rdd will have the following structure:
+            # <page, <timestamp, words>>
+            page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
+            links_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
+
+            with open("/tmp/entities_out_{}.txt".format(q), "w") as fh:
+                for i in links_diff_rdd.collect():
+                    fh.write(str(i) + "\n")
+                        
+            # TASK2
+            # words diff
+            # select all the words within a page and
+            # build a large tuple set
+            words_rdd = json_text_rdd.flatMap(collect_words)
+
+            # TODO: do stopwords removal here
+            
+            pair_words_rdd = words_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
+
+            # collect all words within a page in a single rdd
+            words_page_rdd = pair_words_rdd.groupByKey()\
+                             .mapValues(lambda entry_values: list(entry_values))
+
+            # relax the structure and change the
+            # pair rdd key-value values
+            relaxed_rdd = words_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
+
+            # the new pair rdd will have the following structure:
+            # <page, <timestamp, words>>
+            page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
+            words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
+
+            # q is used here for debug.
+            # write the rdd to several files in /tmp/*
+            with open("/tmp/words_out_{}.txt".format(q), "w") as fh:
+                for i in words_diff_rdd.collect():
+                    fh.write(str(i) + "\n")
+            q += 1
+
+            # rdd union
+            # json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
+
+            #try:
+            #    links = spark.createDataFrame(pair_rdd, ["page", "link"])
+            #    links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
+            #except ValueError:
+            #    logging.warning("Empty RDD.")
