@@ -3,6 +3,8 @@ import logging
 import xml.etree.ElementTree as ET
 import parsewiki.parsepage as pp
 
+stopwords_all = []
+
 def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
     """Given a bz2 file, split it into several bz2 files,
     each one with a given maximum number of pages."""
@@ -17,14 +19,14 @@ def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
             chunks.insert(0, "<mediawiki>\n")
             chunks.append("\n</mediawiki>\n")
             chunk_file_name = file_prefix + \
-                          str(iteration_count) + \
-                          ".xml"
+                str(iteration_count) + ".xml"
             with open(chunk_file_name, "w") as fh:
                 fh.write(str.join("", chunks))
             chunks = []
             page_count = 0
         if iteration_count >= max_iteration:
             break
+
 
 def page_iter(text_stream):
     """Given a generic text stream,
@@ -60,13 +62,15 @@ def page_iter(text_stream):
             if read is True:
                 wikipage.append(char)
 
+
 def bzip2_page_iter(bz2_filename):
     """Given a bzip2 filename,
     copy all the content within `<page> ... </page>`
     tags."""
     with bz2.open(bz2_filename, "rt") as bz2_fh:
-        for page in  page_iter(bz2_fh):
+        for page in page_iter(bz2_fh):
             yield page
+
 
 def bzip2_memory_page_iter(stream_dump):
     """Given a streaming dump, decode it and
@@ -74,6 +78,7 @@ def bzip2_memory_page_iter(stream_dump):
     decoded_dump = bz2.decompress(stream_dump).decode()
     for page in page_iter(decoded_dump):
         yield page
+
 
 def iter_revisions(xml_wikipage):
     """Given a wikidump page structure, return
@@ -91,13 +96,14 @@ def iter_revisions(xml_wikipage):
     for revision in parsed_page.iterfind("revision"):
         content_format = revision.find('format').text.strip()
         if content_format != "text/x-wiki":
-            logging.info("Incorrect content format found, " +\
-                          "it will be **ignored**" +\
-                          "found {}".format(content_format))
+            logging.info("Incorrect content format found, " +
+                         "it will be **ignored**" +
+                         "found {}".format(content_format))
             break
         timestamp = revision.find('timestamp').text
         plain_wikitext = revision.find('text').text
         yield (title, timestamp, plain_wikitext)
+
 
 def parse_single_wikipage(filename):
     """Given a file containing just a single page
@@ -109,7 +115,36 @@ def parse_single_wikipage(filename):
     mw_page = pp.Page.parse_page(content)
     return mw_page
 
+
 def wikipage_to_json(wikitext, title=None, timestamp=None):
     content = pp.pfh.parse(wikitext)
     mw_page = pp.Page.parse_page(content, title, timestamp)
     return mw_page.to_json()
+
+
+def generate_stopwords():
+    global stopwords_all
+    stopwords = ["i", "me", "my", "myself", "we", "our", "ours", "ourselves",
+                 "you", "your", "yours", "yourself", "yourselves", "he", "him",
+                 "his", "himself", "she", "her", "hers", "herself", "it", "its",
+                 "itself", "they", "them", "their", "theirs", "themselves", "what",
+                 "which", "who", "whom", "this", "that", "these", "those", "am",
+                 "is", "are", "was", "were", "be", "been", "being", "have", "has",
+                 "had", "having", "do", "does", "did", "doing", "a", "an", "the",
+                 "and", "but", "if", "or", "because", "as", "until", "while",
+                 "of", "at", "by", "for", "with", "about", "against", "between",
+                 "into", "through", "during", "before", "after", "above", "below",
+                 "to", "from", "up", "down", "in", "out", "on", "off", "over",
+                 "under", "again", "further", "then", "once", "here", "there",
+                 "when", "where", "why", "how", "all", "any", "both", "each",
+                 "few", "more", "most", "other", "some", "such", "no", "nor",
+                 "not", "only", "own", "same", "so", "than", "too", "very",
+                 "s", "t", "can", "will", "just", "don", "should", "now"]
+    for i in stopwords:
+        stopwords_all.append(i)
+        stopwords_all.append(i.capitalize())
+        stopwords_all.append(i.upper())
+
+
+def remove_stopword(words):
+    return words - set(stopwords_all)
