@@ -30,7 +30,7 @@ schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
 
-def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
+def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=None):
     """Return a bzip2 file containing wikipedia pages in chunks
     of a given number of pages.
 
@@ -44,6 +44,10 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
       max_numpage (int): length of each chunk
       max_iteration (int): number of iterations of the process
     """
+    if max_numpage <= 0:
+        raise ValueError("Insufficient number of pages specified.")
+    if max_iteration is not None and max_iteration <= 0:
+        raise ValueError("Insufficient number of iterations specified.")
     num_iteration = 0
     num_page = 0
     pages = []
@@ -55,23 +59,41 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
         page_iterator = pwu.bzip2_page_iter
     for wikipage in page_iterator(bzip2_source):
         for revision in pwu.iter_revisions(wikipage):
-            num_page += 1
             pages.append(revision)
             # remember that revision is a tuple
-            # (title, timestamp, plain_wikitext)
+            # (title, timestamp, contributor, plain_wikitext)
             if num_page >= max_numpage:
                 yield pages
                 pages = []
                 num_page = 0
                 num_iteration += 1
+                num_page += 1
         if max_iteration and num_iteration >= max_iteration:
             break
     if len(pages) > 0:
         yield pages
 
 def jsonify(wiki_tuple):
-    title, timestamp, page = wiki_tuple
-    return pwu.wikipage_to_json(page, title, timestamp)
+    title, timestamp, contributor, page = wiki_tuple
+    return pwu.wikipage_to_json(page, title, timestamp, contributor)
+
+def collect_diff_elements(json_page):
+    """Return a tuple (page, timestamp, text, location)
+    for each token in the unstrucuted part.
+    Text in case of links will contain the explicit link
+    and not the visible text appearing on the page."""
+    results = []
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    # unstructured_part: [word, link, position]
+    for un_sp in page['unstructured_part']:
+        if un_sp[1] is not None:
+            # if it's a link then return it
+            results.append((title, timestamp, un_sp[1], un_sp[2]))
+        else:
+            results.append((title, timestamp, un_sp[0], un_sp[2]))
+    return results
 
 def collect_links(json_page):
     """Return a tuple (page, timestamp, link)
@@ -84,12 +106,13 @@ def collect_links(json_page):
     for sp in page['structured_part']:
         if sp[2] is not None:
             results.append((title, timestamp, sp[2]))
-    # unstructured_part: [key, link, position]
+    # unstructured_part: [word, link, position]
     for un_sp in page['unstructured_part']:
         if un_sp[1] is not None:
             results.append((title, timestamp, un_sp[1]))
     #return [result for result in results if result[1] is not None]
     return results
+
 
 def collect_words(json_page):
     """Return a tuple (page, timestamp, word)
@@ -111,6 +134,39 @@ def collect_words(json_page):
         results.append((title, timestamp, word))
     return results
 
+def versions_diff(iterable):
+    """Given an iterable set containing timestamps
+    for the same page, order them according to the timestamp,
+    pick the timestamp two by two in sequence and compute
+    the diff over the token.
+
+    If words on a given location in two consecutive
+    timestamps are different than it means
+    that the word in the current timestamp has been
+    deleted and the word in the new timestamp has been
+    added.
+
+    Return:
+      A tuple
+      <current_timestamp, next_timestamp, action_type, word>.
+    """
+    list_iter = list(iterable)
+    timestamps = [value[0] for value in list_iter]
+
+    sorted_ts = arg_sort(timestamps)
+    version_pairs = [(sorted_ts[t], sorted_ts[t+1]) \
+                  for t in range(len(sorted_ts) - 1)]
+    results = []
+    for pair in version_pairs:
+        current_index, successive_index = pair
+        current = list_iter[current_index]
+        successive = list_iter[successive_index]
+        text_current = current[1]
+        text_successive = successive[1]
+        if text_current != text_successive:
+            results.append((current[0], successive[0], "INS", text_successive))
+            results.append((current[0], successive[0], "DEL", text_current))
+    return results
 
 def time_diff(iterable):
     """Given an iterable set containing timestamps
@@ -248,10 +304,6 @@ def get_offline_dump(dump_folder):
     for dump in dump_files:
         yield dump_folder + os.sep + dump
 
-def to_csv(row):
-    page, ts, link = row
-    return str.join("\t", [page, ts, link])
-    
             
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
@@ -291,47 +343,40 @@ if __name__ == "__main__":
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     q = 0
     for dump in get_dump():
-        for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
+        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=None):
 
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
-            """
-            # TASK 1: entity diff - method1
-            # rearrange row values in order to have
-            # a composite key made of (page, link) entries.
-            # In addition remove double entries (with distinct).
-            page_link_rdd = link_rdd.map(lambda entry:\
-                                         ((entry[0], entry[2]), entry[1]))\
-                                         .distinct()
-            # group entries having same composite key
-            # and flat the values obtained.
-            # We now have all timestamps where a particular
-            # link in a page has been changed.
-            versions_rdd = page_link_rdd.groupByKey()\
-                                        .mapValues(lambda entry_vals: list(entry_vals))
 
-            # create a paird rdd <page, (link, tss)> which
-            # will be used to join with the timestamp rdd.
-            page_link_tss_rdd = versions_rdd.map(lambda entry: (entry[0][0], (entry[0][1], entry[1])))
+            # from json to <page, timestamp, text, location>
+            unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
 
-            # We now want to have all timestamps a page has.
-            # First, we collect all the timestamps associated to a page
-            ts_list_rdd = link_rdd.map(lambda entry: (entry[0], entry[1])).distinct()
-            page_ts_rdd = ts_list_rdd.groupByKey().mapValues(lambda entry_vals: list(entry_vals))
-
-            # We want to expand the page_link_tss rdd with all timestamps
-            # a page has, so that we can then further be able to
-            # track the appearance and disappearance of a link on the timeline.
-            #
-            # We then rearrange the rdd
-            joined_rdd = page_link_tss_rdd.\
-                         join(page_ts_rdd)\
-                         .map(lambda entry: (\
-                                             (entry[0], entry[1][0][0]),\
-                                             (entry[1][0][1], entry[1][1])))
-            # finally we map the joined rdd so that
-            # we make a row in the timestamp matrix.
-            entity_encoding_rdd = joined_rdd.map(encode_timestamp)
+            # obtain pair rdd <(page, location), (timestamp, text)>
+            locations_rdd = unstruct_parts_rdd\
+                            .map(lambda entry: ((entry[0], entry[3]),\
+                                                (entry[1], entry[2])))
+            # group by page and location, result is
+            # an list of words appearing in a given location
+            # spanning across all the timestamps of a page
+            word_versions_rdd = locations_rdd\
+                                .groupByKey()\
+                                .mapValues(lambda entry_values: list(entry_values))
+            
+            versions_diff_rdd = word_versions_rdd\
+                                .flatMapValues(versions_diff)\
+                                .map(lambda entry: ((entry[0][0],\
+                                                     entry[1][0],\
+                                                     entry[1][1]),\
+                                                    (entry[1][2],\
+                                                     entry[0][1],\
+                                                     entry[1][3])))
+            page_diff_rdd = versions_diff_rdd\
+                            .groupByKey()\
+                            .mapValues(lambda entry_values: list(entry_values))\
+                            .map(lambda entry: (entry[0][0],
+                                                entry[0][1],
+                                                entry[0][2],
+                                                entry[1]))
             """
             # TASK1
             # entity diff - method 2
@@ -377,6 +422,15 @@ if __name__ == "__main__":
             with open("/tmp/words_out_{}.txt".format(q), "w") as fh:
                 for i in words_diff_rdd.collect():
                     fh.write(str(i) + "\n")
+            """
+            with open("/tmp/json_page_{}.txt".format(q), "w") as fh:
+                for i in json_text_rdd.collect():
+                    fh.write(str(i) + "\n")
+
+            with open("/tmp/diff_{}.txt".format(q), "w") as fh:
+                for i in page_diff_rdd.collect():
+                    fh.write(str(i) + "\n")
+
             q += 1
 
             # rdd union

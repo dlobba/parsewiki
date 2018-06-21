@@ -93,7 +93,7 @@ def iter_revisions(xml_wikipage):
       be very large..."""
     parsed_page = ET.fromstring(xml_wikipage)
     title = parsed_page.find('title').text
-    for revision in parsed_page.iterfind("revision"):
+    for revision in parsed_page.iterfind('revision'):
         content_format = revision.find('format').text.strip()
         if content_format != "text/x-wiki":
             logging.info("Incorrect content format found, " +
@@ -101,8 +101,11 @@ def iter_revisions(xml_wikipage):
                          "found {}".format(content_format))
             break
         timestamp = revision.find('timestamp').text
+        contributor = revision.find('contributor').find('username')
+        if contributor is not None:
+            contributor = contributor.text.strip()
         plain_wikitext = revision.find('text').text
-        yield (title, timestamp, plain_wikitext)
+        yield (title, timestamp, contributor, plain_wikitext)
 
 
 def parse_single_wikipage(filename):
@@ -115,10 +118,9 @@ def parse_single_wikipage(filename):
     mw_page = pp.Page.parse_page(content)
     return mw_page
 
-
-def wikipage_to_json(wikitext, title=None, timestamp=None):
+def wikipage_to_json(wikitext, title=None, timestamp=None, contributor=None):
     content = pp.pfh.parse(wikitext)
-    mw_page = pp.Page.parse_page(content, title, timestamp)
+    mw_page = pp.Page.parse_page(content, title, timestamp, contributor)
     return mw_page.to_json()
 
 
