@@ -60,7 +60,7 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=None):
         for revision in pwu.iter_revisions(wikipage):
             pages.append(revision)
             # remember that revision is a tuple
-            # (title, timestamp, plain_wikitext)
+            # (title, timestamp, contributor, plain_wikitext)
             if num_page >= max_numpage:
                 yield pages
                 pages = []
@@ -73,8 +73,8 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=None):
         yield pages
 
 def jsonify(wiki_tuple):
-    title, timestamp, page = wiki_tuple
-    return pwu.wikipage_to_json(page, title, timestamp)
+    title, timestamp, contributor, page = wiki_tuple
+    return pwu.wikipage_to_json(page, title, timestamp, contributor)
 
 def collect_diff_elements(json_page):
     """Return a tuple (page, timestamp, text, location)
@@ -301,10 +301,6 @@ def get_offline_dump(dump_folder):
     for dump in dump_files:
         yield dump_folder + os.sep + dump
 
-def to_csv(row):
-    page, ts, link = row
-    return str.join("\t", [page, ts, link])
-    
             
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
@@ -345,7 +341,7 @@ if __name__ == "__main__":
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     q = 0
     for dump in get_dump():
-        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=0):
+        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=None):
 
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
@@ -431,6 +427,10 @@ if __name__ == "__main__":
                 for i in words_diff_rdd.collect():
                     fh.write(str(i) + "\n")
             """
+            with open("/tmp/json_page_{}.txt".format(q), "w") as fh:
+                for i in json_text_rdd.collect():
+                    fh.write(str(i) + "\n")
+
             with open("/tmp/diff_{}.txt".format(q), "w") as fh:
                 for i in page_diff_rdd.collect():
                     fh.write(str(i) + "\n")
