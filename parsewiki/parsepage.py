@@ -25,10 +25,11 @@ class Page:
       page.
     """
     
-    def __init__(self, title, timestamp=None):
+    def __init__(self, title, timestamp=None, contributor=None):
         self.word_count = 0
         self.title = title
         self.timestamp = timestamp
+        self.contributor = contributor
         self.struct = dict()
         
         # once the struct_part is freezed it's no more
@@ -52,32 +53,25 @@ class Page:
         self._freeze_struct = False
 
     @classmethod
-    def parse_page(cls, source_page, title=None, date=None, infoboxes=None):
+    def parse_page(cls, source_page, title=None, date=None, contributor=None):
         """Given a page Wikicode return the information
         encoded within a Page object.
 
         Args:
           title (str): the page (entity) title.
           date (str): the date of its last revision.
-          infoboxes: the set of templates representing infoboxes.
 
         Returns:
           A Page object.
 
-        Note:
-          `infoboxes` is needed only for non wikipage that
-          do not follow an explicit convention to represent
-          them (like for the Italian Wikipedia where there is
-          no way to distinguish between infobox templates
-          and other kind of templates.
         """
-        page = Page(title, date)
+        page = Page(title, date, contributor)
         # make a shallow copy (why source_page.nodes[:]
         # doesn't work?)
         nodes = copy.copy(source_page.nodes)
         while nodes:
             node = nodes.pop(0)
-            info_type, value = parse_node(node, infoboxes)
+            info_type, value = parse_node(node)
             if info_type == Token.TEXT:
                 for word in value:
                     page.word_count += 1
@@ -107,6 +101,7 @@ class Page:
     def to_json(self):
         public_data = {"title": self.title, \
                        "timestamp": self.timestamp, \
+                       "contributor": self.contributor,\
                        "structured_part": None, \
                        "unstructured_part": self.unstruct}
 
@@ -145,53 +140,6 @@ def is_wikilink_entity(wikilink_node):
     media_namespaces = tuple(media_namespaces)
     return not wikilink_node.title\
                             .startswith(media_namespaces)
-
-def get_wikilink_url(wikilink_title, lang="en"):
-    """
-    This is not used and is kept only for further mind boggling.
-    In this way, we do not know how to obtain url, and another
-    program will have to do this work.
-    """
-    def get_language(wiki):
-        # if this holds then either we have a language link
-        # since special links (like :Category:) cannot are individuated
-        # by is_wiki_enitity
-        if first_colon == 0:
-            second_colon = wikilink_title.find(":", 1)
-            lang = wikilink_title[first_colon + 1 : second_colon] # here we suppose is a language
-        return lang
-            
-    wiki_language_projects = ("wikipedia", \
-                            "wiktionary", "wikt", \
-                            "wikinews", "wikibooks", \
-                            "wikiquote", "wikisource", \
-                            "wikiversity", "wikivoyage")
-    wiki_lang_alternative = {"w": "wikipedia", \
-                             "simple": "wikipedia", \
-                             "n": "wikinews", \
-                             "b": "wikibooks", \
-                             "q": "wikiquote", \
-                             "s": "wikisource", \
-                             "v": "wikiversity", \
-                             "voy": "wikivoyage"}
-    wiki_static_projects = {\
-                            "wikispecies": "species.wikimedia.org/wiki/", \
-                            "species": "species.wikimedia.org/wiki/", \
-                            "oldwikisource": "wikisource.org/wiki/", \
-                            "wikidata": "wikidata.org/wiki/", \
-                            "d": "wikidata.org/wiki/", \
-                            "wikimedia": "wikimediafoundation.org/wiki/", \
-                            "foundation": "wikimediafoundation.org/wiki/", \
-                            "wmf": "wikimediafoundation.org/wiki/", \
-                            "commons": "commons.wikipedia.org/wiki/", \
-                            "c": "commons.wikipedia.org/wiki/", \
-                            "metawikipedia": "meta.wikipedia.org/wiki/", \
-                            "meta": "meta.wikipedia.org/wiki/", \
-                            "m": "meta.wikipedia.org/wiki/"}
-
-    first_colon = wikilink_title.find(":")
-    if first_colon < 0:
-        return lang + "." + "wikipedia.org/wiki/"
     
 def parse_wikilink(wikilink_node):
     """Return wikilink title and visible text.
@@ -199,8 +147,6 @@ def parse_wikilink(wikilink_node):
     it's returned instead.
     """
     title = wikilink_node.title.split("#")[0]
-    # perform Wikipedia URL encoding
-    # TODO: maneage here url
     # as of now, without further decisions, url is the same
     # as title.
     url = title
@@ -301,7 +247,7 @@ def parse_as_text_chunk(node):
     """
     return str(node).strip()
                       
-def parse_node(current_node, infoboxes=None):
+def parse_node(current_node):
     """Parse the current node based on his class and
     return the result along with the Token type it belongs
     to.
@@ -362,8 +308,7 @@ def parse_node(current_node, infoboxes=None):
     else:
         return Token.IGNORE, parse_as_text_chunk(current_node)
 
-
-def parse_param(source_param, infoboxes=None):
+def parse_param(source_param):
     """Parse infobox parameters' wikicode.
 
     Each wikicode is parsed in the same fashion as for the page
@@ -372,7 +317,6 @@ def parse_param(source_param, infoboxes=None):
     Args:
       source_param (Wikicode): the wikicode contained in as parameter
                                value.
-
     Notes:
       It's the equivalent of parse page for wikicode present
       in parameters' value.
@@ -382,7 +326,7 @@ def parse_param(source_param, infoboxes=None):
     nodes = copy.copy(source_param.nodes)
     while nodes:
         node = nodes.pop(0)
-        info_type, value = parse_node(node, infoboxes)
+        info_type, value = parse_node(node)
         if info_type == Token.TEXT:
             words.extend(list(value))
         if info_type == Token.WORD:
@@ -395,7 +339,7 @@ def parse_param(source_param, infoboxes=None):
             nodes = value.nodes + nodes
     return str.join(" ", words), entities
 
-def parse_unstruct_wikicode(source_wikicode, infoboxes=None):
+def parse_unstruct_wikicode(source_wikicode):
     """Parse nested wikicode, belonging to the unstructured
     part.
 
@@ -417,7 +361,7 @@ def parse_unstruct_wikicode(source_wikicode, infoboxes=None):
     nodes = copy.copy(source_wikicode.nodes)
     while nodes:
         node = nodes.pop(0)
-        info_type, value = parse_node(node, infoboxes)
+        info_type, value = parse_node(node)
         if info_type == Token.TEXT:
             nested_part.extend([(word, None) for word in value])
         if info_type == Token.WORD:
