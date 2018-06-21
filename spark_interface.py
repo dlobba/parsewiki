@@ -8,6 +8,7 @@ import requests
 import parsewiki.utils as pwu
 import cli_utils as cu
 
+from nltk.corpus import stopwords
 from collections import OrderedDict
 from copy import deepcopy
 from pyspark import SparkConf, SparkContext
@@ -127,7 +128,9 @@ def collect_words(json_page):
         words.add(un_sp[0])
     if not len(words):
         return [(title, timestamp, None)]
-    for word in words:
+    pwu.generate_stopwords()
+    filtered_words = pwu.remove_stopword(words)
+    for word in filtered_words:
         results.append((title, timestamp, word))
     return results
 
@@ -309,7 +312,6 @@ if __name__ == "__main__":
     """
     # initialization given and CLI arguments management
     args = cu.define_argparse().parse_args()
-
     spark_configs = cu.DEFAULT_SPARK_CONFIGURATIONS
     online_configs = cu.DEFAULT_ONLINE_CONFIGURATIONS
     if args.online_conffile:
@@ -403,24 +405,18 @@ if __name__ == "__main__":
             # select all the words within a page and
             # build a large tuple set
             words_rdd = json_text_rdd.flatMap(collect_words)
-
-            # TODO: do stopwords removal here
-            
             pair_words_rdd = words_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
-
             # collect all words within a page in a single rdd
             words_page_rdd = pair_words_rdd.groupByKey()\
                              .mapValues(lambda entry_values: list(entry_values))
-
             # relax the structure and change the
             # pair rdd key-value values
             relaxed_rdd = words_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
-
             # the new pair rdd will have the following structure:
             # <page, <timestamp, words>>
             page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
             words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
-
+            
             # q is used here for debug.
             # write the rdd to several files in /tmp/*
             with open("/tmp/words_out_{}.txt".format(q), "w") as fh:
