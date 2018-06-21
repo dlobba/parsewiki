@@ -29,7 +29,7 @@ schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
 
-def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
+def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=None):
     """Return a bzip2 file containing wikipedia pages in chunks
     of a given number of pages.
 
@@ -43,6 +43,10 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
       max_numpage (int): length of each chunk
       max_iteration (int): number of iterations of the process
     """
+    if max_numpage <= 0:
+        raise ValueError("Insufficient number of pages specified.")
+    if max_iteration is not None and max_iteration <= 0:
+        raise ValueError("Insufficient number of iterations specified.")
     num_iteration = 0
     num_page = 0
     pages = []
@@ -54,7 +58,6 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
         page_iterator = pwu.bzip2_page_iter
     for wikipage in page_iterator(bzip2_source):
         for revision in pwu.iter_revisions(wikipage):
-            num_page += 1
             pages.append(revision)
             # remember that revision is a tuple
             # (title, timestamp, plain_wikitext)
@@ -63,6 +66,7 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=20, max_iteration=None):
                 pages = []
                 num_page = 0
                 num_iteration += 1
+                num_page += 1
         if max_iteration and num_iteration >= max_iteration:
             break
     if len(pages) > 0:
@@ -341,7 +345,7 @@ if __name__ == "__main__":
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     q = 0
     for dump in get_dump():
-        for chunk in get_wikipedia_chunk(dump, max_numpage=200, max_iteration=0):
+        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=0):
 
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
