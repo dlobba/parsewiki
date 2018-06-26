@@ -5,6 +5,7 @@ import hashlib
 import logging
 
 import requests
+import parsewiki.lcs as lcsdiff
 import parsewiki.utils as pwu
 import cli_utils as cu
 
@@ -304,6 +305,29 @@ def get_offline_dump(dump_folder):
     for dump in dump_files:
         yield dump_folder + os.sep + dump
 
+def indexer(timestamp_list):
+    ts_list = list(timestamp_list)
+    ts_list.sort()
+    result = []
+    for index in range(0, len(ts_list)):
+        result.append((ts_list[index], index))
+    return result
+
+def diff(entry):
+    if entry[0][0] < entry[1][0]:
+        entry_current = entry[0]
+        entry_successive = entry[1]
+    else:
+        entry_current = entry[1]
+        entry_successive = entry[0]
+
+    version_current = entry_current[0]
+    sequence_current = entry_current[1]
+    version_successive = entry_successive[0]
+    sequence_successive = entry_successive[1]
+    return version_current, version_successive,\
+        tuple(lcsdiff.diff(sequence_current, sequence_successive))
+            
             
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
@@ -351,32 +375,49 @@ if __name__ == "__main__":
             # from json to <page, timestamp, text, location>
             unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
 
-            # obtain pair rdd <(page, location), (timestamp, text)>
-            locations_rdd = unstruct_parts_rdd\
-                            .map(lambda entry: ((entry[0], entry[3]),\
-                                                (entry[1], entry[2])))
-            # group by page and location, result is
-            # an list of words appearing in a given location
-            # spanning across all the timestamps of a page
-            word_versions_rdd = locations_rdd\
-                                .groupByKey()\
-                                .mapValues(lambda entry_values: list(entry_values))
+            # SUBTASK: Indexing timestamps -------
+
+            timestamp_indexer_rdd = unstruct_parts_rdd.map(lambda entry: (entry[0], (entry[1],)))\
+                         .distinct()\
+                         .reduceByKey(lambda t1_list, t2_list:\
+                                      tuple(list(t1_list) + list(t2_list)))\
+                         .flatMapValues(indexer)\
+                         .map(lambda entry: ((entry[0], entry[1][0]), entry[1][1]))
+
+            # by joining the two rdds we obtain
+            #     (<P, TimestampString>, ((text, location), TimestampIndex))
+            # we want to replace TimestampString with TimestampIndex
+            # that's what the last map does
+            vectorized_rdd = unstruct_parts_rdd\
+                             .map(lambda entry: ((entry[0], entry[1]), (entry[2], entry[3])))\
+                             .join(timestamp_indexer_rdd)\
+                             .map(lambda entry: ((entry[0][0], entry[1][1]),\
+                                                 entry[1][0]))
+            # END-SUBTASK ------------------------
+            # we now have
+            #    (<P, TimestampIndex>, (text, location))
             
-            versions_diff_rdd = word_versions_rdd\
-                                .flatMapValues(versions_diff)\
-                                .map(lambda entry: ((entry[0][0],\
-                                                     entry[1][0],\
-                                                     entry[1][1]),\
-                                                    (entry[1][2],\
-                                                     entry[0][1],\
-                                                     entry[1][3])))
-            page_diff_rdd = versions_diff_rdd\
-                            .groupByKey()\
-                            .mapValues(lambda entry_values: list(entry_values))\
-                            .map(lambda entry: (entry[0][0],
-                                                entry[0][1],
-                                                entry[0][2],
-                                                entry[1]))
+            words_timestamp_rdd = vectorized_rdd\
+                                  .map(lambda entry: (entry[0], (entry[1],)))\
+                                  .reduceByKey(lambda entry1, entry2:\
+                                               tuple(list(entry1) + list(entry2)))
+
+            ts_rdd = words_timestamp_rdd.\
+                     map(lambda entry: \
+                         ((entry[0][0], entry[0][1]),\
+                          (entry[0][1], entry[1])))
+
+            ts_successive_rdd = words_timestamp_rdd.\
+                                map(lambda entry:\
+                                    ((entry[0][0], entry[0][1] + 1),\
+                                     (entry[0][1], entry[1])))
+
+            consecutive_ts_rdd = ts_rdd\
+                                 .leftOuterJoin(ts_successive_rdd)\
+                                 .filter(lambda entry:\
+                                         entry[1][0] is not None and entry[1][1])\
+                                 .mapValues(diff)
+            
             """
             # TASK1
             # entity diff - method 2
@@ -428,7 +469,7 @@ if __name__ == "__main__":
                     fh.write(str(i) + "\n")
 
             with open("/tmp/diff_{}.txt".format(q), "w") as fh:
-                for i in page_diff_rdd.collect():
+                for i in consecutive_ts_rdd.collect():
                     fh.write(str(i) + "\n")
 
             q += 1
