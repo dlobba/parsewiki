@@ -3,6 +3,7 @@ import sys
 import json
 import hashlib
 import logging
+import re
 
 import requests
 import parsewiki.lcs as lcsdiff
@@ -95,6 +96,15 @@ def collect_diff_elements(json_page):
         else:
             results.append((title, timestamp, un_sp[0], un_sp[2]))
     return results
+
+def collect_heading(json_page):
+    """Return a tuple (page_title, timestamp, json_page)
+    for the given page."""
+    results = []
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    return title, timestamp, json_page
 
 def collect_links(json_page):
     """Return a tuple (page, timestamp, link)
@@ -366,11 +376,54 @@ if __name__ == "__main__":
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     q = 0
+
+    json_dir = "/tmp/json/"
     for dump in get_dump():
         for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=None):
+            # TASK1: get the dump, max_numpage pages at a time.
+            # Transform to JSON the pages and create a .json
+            # file for each page, containing JSON objects representing
+            # page revisions.
 
+            if not os.path.exists(json_dir):
+                os.makedirs(json_dir)
+            
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
+
+            json_heading_rdd = json_text_rdd\
+                       .map(collect_heading)
+
+            # obtain all pages, so we can create a filename
+            page_titles = json_heading_rdd\
+                         .map(lambda entry: entry[0])\
+                         .distinct()\
+                         .collect()
+
+            json_pages = json_heading_rdd\
+                         .map(lambda entry: ((entry[0], entry[1]), entry[2]))\
+                         .sortByKey()\
+                         .collect()
+
+            # create (flushing) a new file for each page
+            filename_assoc = {title:0 for title in page_titles}
+            for page_title in page_titles:
+                filename = str.join("_", [word\
+                                       for word in re.split("\W",\
+                                                            page_title.lower())\
+                                       if word != ""])
+                filename_assoc[page_title] = filename
+                with open(json_dir + "{}.json".format(filename), "w") as fh:
+                    pass
+                
+            for page in json_pages:
+                page_title = page[0][0]
+                filename = filename_assoc[page_title]
+                with open(json_dir + "{}.json".format(filename), "a") as fh:
+                    fh.write(str(page[1]) + "\n")
+
+            # END TASK1
+        
 
             # from json to <page, timestamp, text, location>
             unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
