@@ -44,7 +44,6 @@ def lcs(seq1, seq2, equal_function=lambda x,y: x == y):
                                                 table[ind1][ind2 + 1])
             ind2 += 1
         ind1 += 1
-    table.pop(1)
     return table
 
 def diff(fseq1, fseq2):
