@@ -7,6 +7,7 @@ import re
 
 import requests
 import parsewiki.lcs as lcsdiff
+import parsewiki.diff as tokendiff
 import parsewiki.utils as pwu
 import cli_utils as cu
 
@@ -355,8 +356,9 @@ def diff(entry):
     sequence_current = entry_current[1]
     version_successive = entry_successive[0]
     sequence_successive = entry_successive[1]
+    # used tokendiff instead of lcsdiff
     return version_current, version_successive,\
-        tuple(lcsdiff.diff(sequence_current, sequence_successive))
+        tuple(tokendiff.token_diff(sequence_current, sequence_successive))
             
             
 if __name__ == "__main__":
@@ -398,7 +400,7 @@ if __name__ == "__main__":
 
     json_dir = "/tmp/json/"
     for dump in get_dump():
-        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=1):
+        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=4):
             # TASK1: get the dump, max_numpage pages at a time.
             # Transform to JSON the pages and create a .json
             # file for each page, containing JSON objects representing
