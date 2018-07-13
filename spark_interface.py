@@ -5,7 +5,7 @@ import hashlib
 import logging
 import re
 
-import parsewiki.lcs as lcsdiff
+#import parsewiki.lcs as lcsdiff
 import parsewiki.diff as tokendiff
 import cli_utils as cu
 import parsewiki.utils as pwu
@@ -166,37 +166,6 @@ def time_diff(iterable):
         items_added = list(set(successive_items) - set(current_items))
         results.append((diff_title, items_added, items_removed))
     return results
-
-def encode_timestamp(entry):
-    """Given an entry ((page, link), (changes_timestamps, page_timestamps))
-    return an entry with same key (page, link) with a
-    binary string which encodes the presence of the link in the
-    page timestamps followed by the ordered set of timestamps for
-    that page.
-
-    Example:
-      Suppose a link is present in 2017-24-1 until 2018-23-2
-      and the page has the timestamps from 2016-31-1 up to
-      2018-04-1 with 6 entries in between (2017-24-1 and
-      2018-23-2 are in between by definition)
-      then the link binary string is:
-      0-1-1-1-1-0
-
-      In this way it's possible to infer that the link wasn't
-      there in the first timestamp, then appeared for a while
-      and the disappeared.
-    """
-    change_ts, page_ts = entry[1]
-    # avoid side effects on the rdd
-    page_ts = deepcopy(page_ts)
-
-    # it would be waaay better for the sort process
-    # to be made by rdd operations...
-    page_ts.sort()
-    out = OrderedDict({key: 0 for key in page_ts})
-    for change in change_ts:
-        out[change] = 1
-    return (entry[0], (page_ts, list(out.values())))       
 
 def indexer(timestamp_list):
     ts_list = list(timestamp_list)
