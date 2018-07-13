@@ -1,9 +1,9 @@
 import os
-import sys
 import json
-import hashlib
+import csv
 import logging
 import re
+import math
 
 #import parsewiki.lcs as lcsdiff
 import parsewiki.diff as tokendiff
@@ -13,7 +13,6 @@ import dumpmanager as dm
 
 from nltk.corpus import stopwords
 from collections import OrderedDict
-from copy import deepcopy
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
@@ -112,7 +111,7 @@ def arg_sort(iterable):
     the ascending order."""
     return sorted(range(len(iterable)), key=lambda x: iterable[x])
 
-def collect_diff_elements(json_page):
+def collect_page_elements(json_page):
     """Return a tuple (page, timestamp, text, location)
     for each token in the unstrucuted part.
     Text in case of links will contain the explicit link
@@ -212,6 +211,127 @@ def diff(entry):
 
 # end functions for task2 ------------------------
 
+# functions to collect statistics ----------------
+
+def collect_page_links(json_page):
+    """Return a tuple (page, link)
+    for each link found in page."""
+    results = []
+    page = json.loads(json_page)
+    title = page['title']
+    # structured_part: [name, text, link]
+    for sp in page['structured_part']:
+        if sp[2] is not None:
+            results.append((title, sp[2]))
+    # unstructured_part: [word, link, position]
+    for un_sp in page['unstructured_part']:
+        if un_sp[1] is not None:
+            results.append((title, un_sp[1]))
+    return results
+
+def collect_page_revision(json_page):
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    return title, timestamp
+
+def collect_statistics1(json_dir, statistics_dir=None):
+    """Retrieve the json pages obtain form task1 and
+    get the following statistics:
+
+    1. number of revisions per page
+    2. total number of unique links per page
+    3. number of tokens per each revision of each page
+    """
+    if statistics_dir is None:
+        statistics_dir = json_dir
+    filename = "statistics.csv"
+    statistics_filepath = statistics_dir + os.sep + filename
+
+    # flush existing statistics file and add
+    # headers
+    with open(statistics_filepath, "w") as fh:
+        csv_writer = csv.writer(fh, quoting=csv.QUOTE_NONNUMERIC)
+        csv_writer.writerow(("page", "revs", "links", "avg_tokens"))
+
+    
+    json_files = [file_ for file_ in os.listdir(json_dir)\
+                  if file_[-5:] == ".json"]
+    
+    for json_file in json_files:
+        # create an rdd of json strings
+        json_text_rdd = spark\
+                        .read\
+                        .text(json_dir + json_file)\
+                        .rdd\
+                        .map(lambda entry: entry.value)
+        # obtain (P, timestamp, text, location)
+        unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
+
+        # if a page has no revision, then the page doesn't exists
+        # so no problem on nulls. This rdd will be used as
+        # base structure (it cannot exist an entry without
+        # a revision associated) in case other rdd will
+        # be empty, in order to have a consistent csv with
+        # all pages eventually
+        page_revisions_rdd = json_text_rdd\
+                             .map(collect_page_revision)\
+                             .map(lambda entry:\
+                                  ((entry[0], entry[1]), 1))\
+                             .distinct()\
+                             .map(lambda entry:\
+                                  (entry[0][0], 1))\
+                             .reduceByKey(lambda num_rev1,\
+                                          num_rev2:\
+                                          num_rev1 + num_rev2)
+        # from the flatMap obtain (Page, link).
+        # Since we are not grouping by <page, timestamp>,
+        # but only by page, we ignore link appearance by
+        # revisions, we are interested only in the
+        # total amount of links for a given a page.
+        #
+        # This is a quality that describe the amount of information
+        # connected (and therefore available) within the page.
+        #
+        # if a page has no links, the first map returns <Page, null>,
+        # which makes problem when joining later.
+        links_rdd = json_text_rdd\
+                    .flatMap(collect_page_links)\
+                    .map(lambda entry: ((entry[0], entry[1]), 1))\
+                    .distinct()\
+                    .map(lambda entry: (entry[0][0], entry[1]))\
+                    .reduceByKey(lambda num_link1, num_link2:\
+                                 num_link1 + num_link2)
+
+        if links_rdd.isEmpty():
+            links_rdd = page_revisions_rdd\
+                        .map(lambda entry: (entry[0], 0))
+
+        page_rev_tokens_rdd = unstruct_parts_rdd\
+                              .map(lambda entry: (entry[0],\
+                                                  1))\
+                              .reduceByKey(lambda num_token1,\
+                                           num_token2:\
+                                           num_token1 + num_token2)
+        if page_rev_tokens_rdd.isEmpty():
+            page_rev_tokens_rdd = page_revisions_rdd\
+                        .map(lambda entry: (entry[0], 0))
+        
+        page_statistics_rdd = page_revisions_rdd\
+                              .join(links_rdd)\
+                              .join(page_rev_tokens_rdd)\
+                              .mapValues(lambda entry:\
+                                         (entry[0][0],\
+                                          entry[0][1],\
+                                          math.ceil(entry[1] / entry[0][0])))
+        with open(statistics_filepath, "a+") as fh:
+            csv_writer = csv.writer(fh, quoting=csv.QUOTE_NONNUMERIC)
+            for page, statistics in page_statistics_rdd.collect():
+                contents = [page] + [stat for stat in statistics]
+                csv_writer.writerow(contents)
+    logging.info("Statistics printed in {}".format(statistics_filepath))
+
+# end functions to collect statistics ------------
 
 def collect_links(json_page):
     """Return a tuple (page, timestamp, link)
@@ -224,11 +344,9 @@ def collect_links(json_page):
     for sp in page['structured_part']:
         if sp[2] is not None:
             results.append((title, timestamp, sp[2]))
-    # unstructured_part: [word, link, position]
     for un_sp in page['unstructured_part']:
         if un_sp[1] is not None:
             results.append((title, timestamp, un_sp[1]))
-    #return [result for result in results if result[1] is not None]
     return results
 
 
@@ -376,10 +494,10 @@ if __name__ == "__main__":
         os.makedirs(json_dir)
 
     # TASK1
-    dump_to_json(sc, get_dump, json_dir)
-    sys.exit()
+    #dump_to_json(sc, get_dump, json_dir)
+    #collect_statistics1(json_dir)
     
-    # TASK2.1: using LCS-based diff
+    # TASK2.1
 
     # read json created previously in json_dir
     json_files = [file_ for file_ in os.listdir(json_dir)\
@@ -395,7 +513,7 @@ if __name__ == "__main__":
                         .map(lambda entry: entry.value)
         
         # from json to <page, timestamp, text, location>
-        unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
+        unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
 
         # SUBTASK: Indexing timestamps -------
 
@@ -442,7 +560,7 @@ if __name__ == "__main__":
                                 ((entry[0][0], entry[0][1] + 1),\
                                  (entry[0][1], entry[1])))
 
-        # TODO: chek it out
+        # TODO: check it out
         consecutive_ts_rdd = ts_rdd\
                              .leftOuterJoin(ts_successive_rdd)\
                              .filter(lambda entry:\
