@@ -15,8 +15,8 @@ from nltk.corpus import stopwords
 from collections import OrderedDict
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType
-
+from pyspark.sql.types import StructType, StructField
+from pyspark.sql.types import StringType, ArrayType, IntegerType
 
 logging.getLogger().setLevel(logging.INFO)
 
@@ -125,6 +125,7 @@ def collect_page_elements(json_page):
       A solution could be to prefix links with a special
       mark.
     """
+    MARK = "[E]"
     results = []
     page = json.loads(json_page)
     title = page['title']
@@ -133,7 +134,7 @@ def collect_page_elements(json_page):
     for un_sp in page['unstructured_part']:
         if un_sp[1] is not None:
             # if it's a link then return it
-            results.append((title, timestamp, un_sp[1], un_sp[2]))
+            results.append((title, timestamp, MARK + un_sp[1], un_sp[2]))
         else:
             results.append((title, timestamp, un_sp[0], un_sp[2]))
     return results
@@ -176,7 +177,7 @@ def gen_pair_indexer(ts_index_pairs):
 
       Having associated the index we can establish
       clearly the relationship between two
-      revision, meaning whichi one happened before
+      revision, meaning which one happened before
       and whether they are adjacent with respect
       to time.
     """
@@ -446,11 +447,20 @@ def time_diff(iterable):
 
 
             
-# If True then it's nullable
-schema = StructType([\
-                     StructField("title", StringType(), True),\
-                     StructField("link", StringType(), True)])
-         
+# These are the schema used to save (and later retrieve)
+# diff elements for task2
+diff_elements_schema = StructType([\
+                          StructField("action", StringType(), False),\
+                          StructField("position", IntegerType(), False),
+                          StructField("tokens", ArrayType(StringType()), False)])
+
+diff_schema = StructType([\
+                     StructField("page", StringType(), False),\
+                     StructField("ver1", StringType(), False),\
+                     StructField("ver2", StringType(), False),\
+                     StructField("diff",\
+                                 ArrayType(diff_elements_schema),\
+                                 False)])         
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
     pages, each chunk is processed within an RDD in order
@@ -484,19 +494,17 @@ if __name__ == "__main__":
     spark = cu.spark_builder(SparkSession.builder, spark_configs)
     sc = spark.sparkContext
 
-    # ???
-    pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-    json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-    pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-
     json_dir = "/tmp/json/"
     if not os.path.exists(json_dir):
         os.makedirs(json_dir)
+    diffs_dir = "/tmp/diffs/"
+    if not os.path.exists(diffs_dir):
+        os.makedirs(diffs_dir)
 
     # TASK1
-    #dump_to_json(sc, get_dump, json_dir)
+    dump_to_json(sc, get_dump, json_dir)
     #collect_statistics1(json_dir)
-    
+
     # TASK2.1
 
     # read json created previously in json_dir
@@ -591,14 +599,15 @@ if __name__ == "__main__":
                    entry[1][1]))
         
         # END SUBTASK ----------------------------
-
+        result_df = final_diff_rdd.toDF(diff_schema)
         # keep in mind we are assuming to work with only one page,
         # if this is not the case this file will contain more pages
         # differences (although the diff operation can take into
         # account different pages)
         filename = json_file[:-5]
-        with open("/tmp/diff_{}.txt".format(filename), "w") as fh:
-            for i in final_diff_rdd.collect():
+        with open(diffs_dir +\
+                  "diff_{}.json".format(filename), "w") as fh:
+            for i in result_df.toJSON().collect():
                 fh.write(str(i) + "\n")
     # END TASK2.1 --------------------------------
 
