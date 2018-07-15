@@ -53,15 +53,23 @@ def page_iter(text_stream):
                     tmp = ""
                 elif end_word == tmp:
                     read = False
-                    wikipage.extend(("e", ">"))
-                    searched_word = start_word
-                    # return partial result and reset
-                    # objective
-                    yield str.join("", wikipage)
+                    try:
+                        wikipage.extend(("e", ">"))
+                        searched_word = start_word
+                        # return partial result and reset
+                        # objective
+                        if len(wikipage) > len(end_word):
+                            yield str.join("", wikipage)
+                    except MemoryError as me:
+                        logging.warning("MemoryError: The wikipage has been ignored. Continuing...")
                     wikipage = []
             if read is True:
-                wikipage.append(char)
-
+                try:
+                    wikipage.append(char)
+                except MemoryError as me:
+                        logging.warning("MemoryError: The wikipage will be ignored. Continuing...")
+                        read = False
+                        wikipage = []
 
 def bzip2_page_iter(bz2_filename):
     """Given a bzip2 filename,
