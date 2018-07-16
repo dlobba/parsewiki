@@ -188,16 +188,16 @@ def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=1):
     if type(bzip2_source) == str:
         page_iterator = bzip2_page_iter
     for wikipage in page_iterator(bzip2_source):
-        num_page += 1
         for revision in iter_revisions(wikipage):
             pages.append(revision)
             # remember that revision is a tuple
             # (title, timestamp, contributor, plain_wikitext)
-            if num_page >= max_numpage:
-                yield pages
-                pages = []
-                num_page = 0
-                num_iteration += 1
+        num_page += 1
+        if num_page >= max_numpage:
+            yield pages
+            pages = []
+            num_page = 0
+            num_iteration += 1
         if max_iteration and num_iteration >= max_iteration:
             break
     if len(pages) > 0:
