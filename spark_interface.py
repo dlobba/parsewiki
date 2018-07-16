@@ -383,9 +383,6 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
                         .text(json_dir + json_file)\
                         .rdd\
                         .map(lambda entry: entry.value)
-        # obtain (P, timestamp, text, location)
-        unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
-
         # if a page has no revision, then the page doesn't exists
         # so no problem on nulls. This rdd will be used as
         # base structure (it cannot exist an entry without
@@ -395,10 +392,7 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
         page_revisions_rdd = json_text_rdd\
                              .map(collect_page_revision)\
                              .map(lambda entry:\
-                                  ((entry[0], entry[1]), 1))\
-                             .distinct()\
-                             .map(lambda entry:\
-                                  (entry[0][0], 1))\
+                                  (entry[0], 1))\
                              .reduceByKey(lambda num_rev1,\
                                           num_rev2:\
                                           num_rev1 + num_rev2)
@@ -415,16 +409,18 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
         # which makes problem when joining later.
         links_rdd = json_text_rdd\
                     .flatMap(collect_page_links)\
-                    .map(lambda entry: ((entry[0], entry[1]), 1))\
+                    .map(lambda entry: (entry[0], entry[1]))\
                     .distinct()\
-                    .map(lambda entry: (entry[0][0], entry[1]))\
+                    .map(lambda entry: (entry[0], 1))\
                     .reduceByKey(lambda num_link1, num_link2:\
                                  num_link1 + num_link2)
 
         if links_rdd.isEmpty():
             links_rdd = page_revisions_rdd\
                         .map(lambda entry: (entry[0], 0))
-
+            
+        # obtain (P, timestamp, text, location)
+        unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
         page_rev_tokens_rdd = unstruct_parts_rdd\
                               .map(lambda entry: (entry[0],\
                                                   1))\
