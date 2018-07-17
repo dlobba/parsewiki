@@ -3,8 +3,11 @@ import sys
 import json
 import hashlib
 import logging
+import re
 
 import requests
+import parsewiki.lcs as lcsdiff
+import parsewiki.diff as tokendiff
 import parsewiki.utils as pwu
 import cli_utils as cu
 
@@ -30,7 +33,7 @@ schema = StructType([\
                      StructField("title", StringType(), True),\
                      StructField("link", StringType(), True)])
 
-def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=None):
+def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=1):
     """Return a bzip2 file containing wikipedia pages in chunks
     of a given number of pages.
 
@@ -94,6 +97,15 @@ def collect_diff_elements(json_page):
         else:
             results.append((title, timestamp, un_sp[0], un_sp[2]))
     return results
+
+def collect_heading(json_page):
+    """Return a tuple (page_title, timestamp, json_page)
+    for the given page."""
+    results = []
+    page = json.loads(json_page)
+    title = page['title']
+    timestamp = page['timestamp']
+    return title, timestamp, json_page
 
 def collect_links(json_page):
     """Return a tuple (page, timestamp, link)
@@ -304,6 +316,50 @@ def get_offline_dump(dump_folder):
     for dump in dump_files:
         yield dump_folder + os.sep + dump
 
+def indexer(timestamp_list):
+    ts_list = list(timestamp_list)
+    ts_list.sort()
+    result = []
+    for index in range(0, len(ts_list)):
+        result.append((ts_list[index], index))
+    return result
+
+def gen_pair_indexer(ts_index_pairs):
+    """Given an entry containing a list
+    of (timestampString, timestampIndex) pairs
+    return a list pairing consecutive timestamps:
+    
+        (<timestamp1Index, timestamp2Index>),
+            (timestamp1String, timestamp2String)
+    """
+    tss_str = []
+    tss_index = []
+    for ts_str, ts_index in ts_index_pairs:
+        tss_str.append(ts_str)
+        tss_index.append(ts_index)
+        
+    result = []
+    for ind in range(0, len(ts_index_pairs)-1):
+        result.append((tss_index[ind], tss_index[ind + 1],\
+                       tss_str[ind], tss_str[ind + 1]))
+    return result
+
+def diff(entry):
+    if entry[0][0] < entry[1][0]:
+        entry_current = entry[0]
+        entry_successive = entry[1]
+    else:
+        entry_current = entry[1]
+        entry_successive = entry[0]
+
+    version_current = entry_current[0]
+    sequence_current = entry_current[1]
+    version_successive = entry_successive[0]
+    sequence_successive = entry_successive[1]
+    # used tokendiff instead of lcsdiff
+    return version_current, version_successive,\
+        tuple(tokendiff.token_diff(sequence_current, sequence_successive))
+            
             
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
@@ -341,97 +397,54 @@ if __name__ == "__main__":
     pairs_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     json_text_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
     pair_rdd = spark.createDataFrame(sc.emptyRDD(), schema).rdd
-    q = 0
-    for dump in get_dump():
-        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=None):
 
+    json_dir = "/tmp/json/"
+    for dump in get_dump():
+        for chunk in get_wikipedia_chunk(dump, max_numpage=5, max_iteration=4):
+            # TASK1: get the dump, max_numpage pages at a time.
+            # Transform to JSON the pages and create a .json
+            # file for each page, containing JSON objects representing
+            # page revisions.
+
+            if not os.path.exists(json_dir):
+                os.makedirs(json_dir)
+            
             rdd = sc.parallelize(chunk, numSlices=20)
             json_text_rdd = rdd.map(jsonify)
 
-            # from json to <page, timestamp, text, location>
-            unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
+            json_heading_rdd = json_text_rdd\
+                       .map(collect_heading)
 
-            # obtain pair rdd <(page, location), (timestamp, text)>
-            locations_rdd = unstruct_parts_rdd\
-                            .map(lambda entry: ((entry[0], entry[3]),\
-                                                (entry[1], entry[2])))
-            # group by page and location, result is
-            # an list of words appearing in a given location
-            # spanning across all the timestamps of a page
-            word_versions_rdd = locations_rdd\
-                                .groupByKey()\
-                                .mapValues(lambda entry_values: list(entry_values))
+            # obtain all pages, so we can create a filename
+            page_titles = json_heading_rdd\
+                         .map(lambda entry: entry[0])\
+                         .distinct()\
+                         .collect()
+
+            json_pages = json_heading_rdd\
+                         .map(lambda entry: ((entry[0], entry[1]), entry[2]))\
+                         .sortByKey()\
+                         .collect()
+
+            # create (flushing) a new file for each page
+            filename_assoc = {title:0 for title in page_titles}
+            for page_title in page_titles:
+                filename = str.join("_", [word\
+                                       for word in re.split("\W",\
+                                                            page_title.lower())\
+                                       if word != ""])
+                filename_assoc[page_title] = filename
+                with open(json_dir + "{}.json".format(filename), "w") as fh:
+                    pass
+                
+            for page in json_pages:
+                page_title = page[0][0]
+                filename = filename_assoc[page_title]
+                with open(json_dir + "{}.json".format(filename), "a") as fh:
+                    fh.write(str(page[1]) + "\n")
+            # push pages to mongoDB alternatively
+            # END TASK1
             
-            versions_diff_rdd = word_versions_rdd\
-                                .flatMapValues(versions_diff)\
-                                .map(lambda entry: ((entry[0][0],\
-                                                     entry[1][0],\
-                                                     entry[1][1]),\
-                                                    (entry[1][2],\
-                                                     entry[0][1],\
-                                                     entry[1][3])))
-            page_diff_rdd = versions_diff_rdd\
-                            .groupByKey()\
-                            .mapValues(lambda entry_values: list(entry_values))\
-                            .map(lambda entry: (entry[0][0],
-                                                entry[0][1],
-                                                entry[0][2],
-                                                entry[1]))
-            """
-            # TASK1
-            # entity diff - method 2
-            links_rdd = json_text_rdd.flatMap(collect_links)
-            pair_links_rdd = links_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
-
-            # collect all links within a page in a single rdd
-            links_page_rdd = pair_links_rdd.groupByKey()\
-                             .mapValues(lambda entry_values: list(entry_values))
-
-            # relax the structure and change the
-            # pair rdd key-value values
-            relaxed_rdd = links_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
-
-            # the new pair rdd will have the following structure:
-            # <page, <timestamp, words>>
-            page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
-            links_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
-
-            with open("/tmp/entities_out_{}.txt".format(q), "w") as fh:
-                for i in links_diff_rdd.collect():
-                    fh.write(str(i) + "\n")
-                        
-            # TASK2
-            # words diff
-            # select all the words within a page and
-            # build a large tuple set
-            words_rdd = json_text_rdd.flatMap(collect_words)
-            pair_words_rdd = words_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
-            # collect all words within a page in a single rdd
-            words_page_rdd = pair_words_rdd.groupByKey()\
-                             .mapValues(lambda entry_values: list(entry_values))
-            # relax the structure and change the
-            # pair rdd key-value values
-            relaxed_rdd = words_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
-            # the new pair rdd will have the following structure:
-            # <page, <timestamp, words>>
-            page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
-            words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
-            
-            # q is used here for debug.
-            # write the rdd to several files in /tmp/*
-            with open("/tmp/words_out_{}.txt".format(q), "w") as fh:
-                for i in words_diff_rdd.collect():
-                    fh.write(str(i) + "\n")
-            """
-            with open("/tmp/json_page_{}.txt".format(q), "w") as fh:
-                for i in json_text_rdd.collect():
-                    fh.write(str(i) + "\n")
-
-            with open("/tmp/diff_{}.txt".format(q), "w") as fh:
-                for i in page_diff_rdd.collect():
-                    fh.write(str(i) + "\n")
-
-            q += 1
 
             # rdd union
             # json_text_rdd = json_text_rdd.union(rdd.map(jsonify))
@@ -441,3 +454,154 @@ if __name__ == "__main__":
             #    links.write.format("com.mongodb.spark.sql.DefaultSource").mode("append").save()
             #except ValueError:
             #    logging.warning("Empty RDD.")
+
+    # TASK2.1: using LCS-based diff
+    json_files = [file_ for file_ in os.listdir(json_dir)\
+                  if file_[-5:] == ".json"]
+    
+    for json_file in json_files:
+
+        # create an rdd of json strings
+        json_text_rdd = spark\
+                        .read\
+                        .text(json_dir + json_file)\
+                        .rdd\
+                        .map(lambda entry: entry.value)
+        
+        # from json to <page, timestamp, text, location>
+        unstruct_parts_rdd = json_text_rdd.flatMap(collect_diff_elements)
+
+        # SUBTASK: Indexing timestamps -------
+
+        # obtain <P, [(t1_str, t1_int), ..., (tn_str, t2_int)]>
+        # where timestamps are sorted
+        timestamp_indexer_rdd = unstruct_parts_rdd\
+                                .map(lambda entry: (entry[0], (entry[1],)))\
+                                .distinct()\
+                                .reduceByKey(lambda t1_list, t2_list:\
+                                             tuple(list(t1_list) + list(t2_list)))\
+
+        str2int_rdd = timestamp_indexer_rdd\
+                      .flatMapValues(indexer)\
+                      .map(lambda entry: ((entry[0], entry[1][0]), entry[1][1]))
+
+        # by joining the two rdds we obtain
+        #     (<P, TimestampString>, ((text, location), TimestampIndex))
+        # we want to replace TimestampString with TimestampIndex
+        # that's what the last map does
+        vectorized_rdd = unstruct_parts_rdd\
+                         .map(lambda entry: ((entry[0], entry[1]), (entry[2], entry[3])))\
+                         .join(str2int_rdd)\
+                         .map(lambda entry: ((entry[0][0], entry[1][1]),\
+                                             entry[1][0]))
+        # END-SUBTASK ------------------------
+        # we now have
+        #    (<P, TimestampIndex>, (text, location))
+
+        words_timestamp_rdd = vectorized_rdd\
+                              .map(lambda entry: (entry[0], (entry[1],)))\
+                              .reduceByKey(lambda entry1, entry2:\
+                                           tuple(list(entry1) + list(entry2)))
+
+        ts_rdd = words_timestamp_rdd.\
+                 map(lambda entry: \
+                     ((entry[0][0], entry[0][1]),\
+                      (entry[0][1], entry[1])))
+
+        ts_successive_rdd = words_timestamp_rdd.\
+                            map(lambda entry:\
+                                ((entry[0][0], entry[0][1] + 1),\
+                                 (entry[0][1], entry[1])))
+
+        consecutive_ts_rdd = ts_rdd\
+                             .leftOuterJoin(ts_successive_rdd)\
+                             .filter(lambda entry:\
+                                     entry[1][0] is not None and entry[1][1])
+
+        # obtain diff objects:
+        # <P, timestampIndex1, timestampIndex2, diff-list>
+        diff_object_rdd = consecutive_ts_rdd\
+                          .mapValues(diff)\
+                          .map(lambda entry: ((entry[0][0], entry[1][0], entry[1][1]),\
+                                              entry[1][2]))
+
+        # SUBSTASK: reversing timestamp index ----
+
+        
+        int2str_rdd = timestamp_indexer_rdd\
+                      .mapValues(indexer)\
+                      .flatMapValues(gen_pair_indexer)\
+                      .map(lambda entry: ((entry[0], entry[1][0], entry[1][1]),\
+                                          (entry[1][2], entry[1][3])))
+
+        final_diff_rdd = int2str_rdd\
+              .join(diff_object_rdd)\
+              .map(lambda entry:\
+                   (entry[0][0], entry[1][0][0], entry[1][0][1],\
+                   entry[1][1]))
+        
+        # END SUBTASK ----------------------------
+
+        # keep in mind we are assuming to work with only one page,
+        # if this is not the case this file will contain more pages
+        # differences (altough the diff operation takes into account different
+        # pages)
+        filename = json_file[:-5]
+        with open("/tmp/diff_{}.txt".format(filename), "w") as fh:
+            for i in final_diff_rdd.collect():
+                fh.write(str(i) + "\n")
+    # END TASK2.1 --------------------------------
+
+    """
+    # TASK2.2: entity diff and word diff without location
+    for json_file in json_files:
+
+        # create an rdd of json strings
+        json_text_rdd = spark\
+                        .read\
+                        .text(json_dir + json_file)\
+                        .rdd\
+                        .map(lambda entry: entry.value)
+        
+        links_rdd = json_text_rdd.flatMap(collect_links)
+        pair_links_rdd = links_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
+
+        # collect all links within a page in a single rdd
+        links_page_rdd = pair_links_rdd\
+                         .groupByKey()\
+                         .mapValues(lambda entry_values: list(entry_values))
+
+        # relax the structure and change the
+        # pair rdd key-value values
+        relaxed_rdd = links_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
+
+        # the new pair rdd will have the following structure:
+        # <page, <timestamp, words>>
+        page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
+        links_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
+
+        # WORDS DIFF
+        # select all the words within a page and
+        # build a large tuple set
+        words_rdd = json_text_rdd.flatMap(collect_words)
+        pair_words_rdd = words_rdd.map(lambda entry: ((entry[0], entry[1]), entry[2]))
+        # collect all words within a page in a single rdd
+        words_page_rdd = pair_words_rdd.groupByKey()\
+                             .mapValues(lambda entry_values: list(entry_values))
+        # relax the structure and change the
+        # pair rdd key-value values
+        relaxed_rdd = words_page_rdd.map(lambda entry: (entry[0][0], entry[0][1], entry[1]))
+        # the new pair rdd will have the following structure:
+        # <page, <timestamp, words>>
+        page_versions_rdd = relaxed_rdd.map(lambda entry: (entry[0], (entry[1], entry[2])))
+        words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
+
+        filename = json_file[:-5]
+        with open("/tmp/diff2_{}.txt".format(filename), "w") as fh:
+                for i in links_diff_rdd.collect():
+                    fh.write(str(i) + "\n")
+        
+        with open("/tmp/diff2_{}.txt".format(filename), "w") as fh:
+            for i in words_diff_rdd.collect():
+                fh.write(str(i) + "\n")
+    """
