@@ -53,15 +53,23 @@ def page_iter(text_stream):
                     tmp = ""
                 elif end_word == tmp:
                     read = False
-                    wikipage.extend(("e", ">"))
-                    searched_word = start_word
-                    # return partial result and reset
-                    # objective
-                    yield str.join("", wikipage)
+                    try:
+                        wikipage.extend(("e", ">"))
+                        searched_word = start_word
+                        # return partial result and reset
+                        # objective
+                        if len(wikipage) > len(end_word):
+                            yield str.join("", wikipage)
+                    except MemoryError as me:
+                        logging.warning("MemoryError: The wikipage has been ignored. Continuing...")
                     wikipage = []
             if read is True:
-                wikipage.append(char)
-
+                try:
+                    wikipage.append(char)
+                except MemoryError as me:
+                        logging.warning("MemoryError: The wikipage will be ignored. Continuing...")
+                        read = False
+                        wikipage = []
 
 def bzip2_page_iter(bz2_filename):
     """Given a bzip2 filename,
@@ -150,3 +158,47 @@ def generate_stopwords():
 
 def remove_stopword(words):
     return words - set(stopwords_all)
+
+
+def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=1):
+    """Return a bzip2 file containing wikipedia pages in chunks
+    of a given number of pages.
+
+    It's possibile to limit the parsing by indicating the number
+    of iteration for the process to be repeated. If this is `None`
+    then all the bzip2 file is processed.
+
+    Params:
+      bzip2_source: source to the bzip2 file, either a filename or
+        a bytearray
+      max_numpage (int): length of each chunk
+      max_iteration (int): number of iterations of the process
+    """
+    if max_numpage <= 0:
+        raise ValueError("Insufficient number of pages specified.")
+    if max_iteration is not None and max_iteration <= 0:
+        raise ValueError("Insufficient number of iterations specified.")
+    num_iteration = 0
+    num_page = 0
+    pages = []
+    # the method used to iterate over pages
+    # ALERT: pointer to function here!
+    page_iterator = bzip2_memory_page_iter
+    # if a filename is given then process as a bz2 file
+    if type(bzip2_source) == str:
+        page_iterator = bzip2_page_iter
+    for wikipage in page_iterator(bzip2_source):
+        for revision in iter_revisions(wikipage):
+            pages.append(revision)
+            # remember that revision is a tuple
+            # (title, timestamp, contributor, plain_wikitext)
+        num_page += 1
+        if num_page >= max_numpage:
+            yield pages
+            pages = []
+            num_page = 0
+            num_iteration += 1
+        if max_iteration and num_iteration >= max_iteration:
+            break
+    if len(pages) > 0:
+        yield pages
