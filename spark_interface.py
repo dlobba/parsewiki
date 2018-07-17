@@ -4,6 +4,7 @@ import csv
 import logging
 import re
 import math
+import time
 
 #import parsewiki.lcs as lcsdiff
 import parsewiki.diff as tokendiff
@@ -19,21 +20,12 @@ from pyspark.sql.types import StructType, StructField
 from pyspark.sql.types import StringType, ArrayType, IntegerType
 from pyspark.sql.functions import size
 
-diff_elements_schema = StructType([\
-                          StructField("action", StringType(), False),\
-                          StructField("position", IntegerType(), False),
-                          StructField("tokens", ArrayType(StringType()),\
-                                      False)])
-
-diff_schema = StructType([\
-                     StructField("page", StringType(), False),\
-                     StructField("ver1", StringType(), False),\
-                     StructField("ver2", StringType(), False),\
-                     StructField("diff",\
-                                 ArrayType(diff_elements_schema),\
-                                 False)])
-
 logging.getLogger().setLevel(logging.INFO)
+
+def plog(log_path, string):
+    with open(log_path, "a+") as fh:
+        fh.write("{} -- {}\n".format(string,\
+                                   str(time.time())))
 
 ## functions for task1 ---------------------------
 
@@ -68,13 +60,14 @@ def dump_to_json(spark_session, dump_iter, json_dir):
     spark_context = spark_session.sparkContext
     for dump in dump_iter():
         for chunk in pwu.get_wikipedia_chunk(dump,\
-                                             max_numpage=5,\
-                                             max_iteration=4):
+                                             max_numpage=1,\
+                                             max_iteration=None):
             chunk_rdd = spark_context.parallelize(chunk, numSlices=20)
             json_text_rdd = chunk_rdd.map(jsonify)
             json_heading_rdd = json_text_rdd\
                                .map(collect_heading)
-
+            chunk_rdd.unpersist()
+            json_text_rdd.unpersist()
             # now we want to store all revision of each
             # page into a separate json file
             # in json_dir
@@ -90,6 +83,7 @@ def dump_to_json(spark_session, dump_iter, json_dir):
                          .map(lambda entry: ((entry[0], entry[1]), entry[2]))\
                          .sortByKey()\
                          .collect()
+            json_heading_rdd.unpersist()
 
             # create (flushing) a new file for each page
             filename_assoc = {title:0 for title in page_titles}
@@ -107,7 +101,6 @@ def dump_to_json(spark_session, dump_iter, json_dir):
                 filename = filename_assoc[page_title]
                 with open(json_dir + "{}.json".format(filename), "a") as fh:
                     fh.write(str(page[1]) + "\n")
-
             # push pages to mongoDB alternatively
             #try:
             #    links = spark.createDataFrame(pair_rdd, ["page", "link"])
@@ -687,17 +680,31 @@ if __name__ == "__main__":
         os.makedirs(diffs_dir)
 
     # TASK1
-    #dump_to_json(spark, get_dump, json_dir)
+    log_file_path = data_dest_dir + "exec.log"
+    
+    plog(log_file_path, "Start")
+
+    plog(log_file_path, "BEGIN-TASK1")
+    dump_to_json(spark, get_dump, json_dir)
+    plog(log_file_path, "END-TASK1")
 
     # STATISTICS1
+    plog(log_file_path, "BEGIN-STAT1")
     collect_statistics1(spark, json_dir, data_dest_dir)
+    plog(log_file_path, "END-STAT1")
 
     # TASK2
+    #plog(log_file_path, "BEGIN-TASK2")
     #compute_diff_set(spark, json_dir, diffs_dir)
+    #plog(log_file_path, "END-TASK2")
 
     # STATISTICS2
+    #plog(log_file_path, "BEGIN-STAT2")
     #collect_statistics2(spark, diffs_dir, data_dest_dir)
+    #plog(log_file_path, "END-STAT2")
 
+    #plog(log_file_path, "End")
+    
     # TASK3:
 
     # TODO:
