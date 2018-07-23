@@ -111,7 +111,7 @@ def iter_revisions(xml_wikipage):
         timestamp = revision.find('timestamp').text
         contributor = revision.find('contributor').find('username')
         if contributor is not None:
-            contributor = contributor.text.strip()
+            contributor = str(contributor.text).strip()
         plain_wikitext = revision.find('text').text
         yield (title, timestamp, contributor, plain_wikitext)
 

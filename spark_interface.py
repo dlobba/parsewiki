@@ -235,7 +235,7 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
 
         # from json to <page, timestamp, text, location>
         unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
-
+        json_text_rdd.unpersist()
         # SUBTASK: Indexing timestamps -------
 
         # obtain <P, [(t1_str, t1_int), ..., (tn_str, t2_int)]>
@@ -262,6 +262,9 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
                          .join(str2int_rdd)\
                          .map(lambda entry: ((entry[0][0], entry[1][1]),\
                                              entry[1][0]))
+
+        unstruct_parts_rdd.unpersist()
+        str2int_rdd.unpersist()
         # END-SUBTASK ------------------------
         # we now have
         #    (<P, TimestampIndex>, (text, location))
@@ -269,6 +272,7 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
                               .map(lambda entry: (entry[0], (entry[1],)))\
                               .reduceByKey(lambda entry1, entry2:\
                                            tuple(list(entry1) + list(entry2)))
+        vectorized_rdd.unpersist()
 
         ts_rdd = words_timestamp_rdd.\
                  map(lambda entry: \
@@ -285,6 +289,9 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
                              .filter(lambda entry:\
                                      entry[1][0] is not None and\
                                      entry[1][1] is not None)
+        ts_rdd.unpersist()
+        ts_successive_rdd.unpersist()
+        words_timestamp_rdd.unpersist()
         # obtain diff objects:
         # <P, timestampIndex1, timestampIndex2, diff-list>
         diff_object_rdd = consecutive_ts_rdd\
@@ -306,6 +313,8 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
               .map(lambda entry:\
                    (entry[0][0], entry[1][0][0], entry[1][0][1],\
                    entry[1][1]))
+        int2str_rdd.unpersist()
+        diff_object_rdd.unpersist()
 
         # END SUBTASK ----------------------------
         result_df = final_diff_rdd.toDF(diff_schema)
@@ -431,6 +440,11 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
                                          (entry[0][0],\
                                           entry[0][1],\
                                           math.ceil(entry[1] / entry[0][0])))
+        page_revisions_rdd.unpersist()
+        links_rdd.unpersist()
+        page_rev_tokens_rdd.unpersist()
+        json_text_rdd.unpersist()
+        unstruct_parts_rdd.unpersist()
         with open(statistics_filepath, "a+") as fh:
             csv_writer = csv.writer(fh, quoting=csv.QUOTE_NONNUMERIC)
             for page, statistics in page_statistics_rdd.collect():
@@ -503,6 +517,7 @@ def collect_statistics2(spark_session, diffs_dir, statistics_dir=None):
                               .map(lambda entry: (entry[0][0], entry[1]))\
                               .reduceByKey(merge_count_statistics)
 
+        diff_stat_rdd.unpersist()
         with open(statistics_filepath, "a+") as fh:
             csv_writer = csv.writer(fh, quoting=csv.QUOTE_NONNUMERIC)
             for page, statistics in page_statistics_rdd.collect():
@@ -684,14 +699,14 @@ if __name__ == "__main__":
     
     plog(log_file_path, "Start")
 
-    plog(log_file_path, "BEGIN-TASK1")
-    dump_to_json(spark, get_dump, json_dir)
-    plog(log_file_path, "END-TASK1")
+    #plog(log_file_path, "BEGIN-TASK1")
+    #dump_to_json(spark, get_dump, json_dir)
+    #plog(log_file_path, "END-TASK1")
 
     # STATISTICS1
-    plog(log_file_path, "BEGIN-STAT1")
-    collect_statistics1(spark, json_dir, data_dest_dir)
-    plog(log_file_path, "END-STAT1")
+    #plog(log_file_path, "BEGIN-STAT1")
+    #collect_statistics1(spark, json_dir, data_dest_dir)
+    #plog(log_file_path, "END-STAT1")
 
     # TASK2
     #plog(log_file_path, "BEGIN-TASK2")
@@ -703,7 +718,7 @@ if __name__ == "__main__":
     #collect_statistics2(spark, diffs_dir, data_dest_dir)
     #plog(log_file_path, "END-STAT2")
 
-    #plog(log_file_path, "End")
+    plog(log_file_path, "End")
     
     # TASK3:
 
