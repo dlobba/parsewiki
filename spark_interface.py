@@ -92,7 +92,7 @@ def dump_to_json(spark_session, dump_iter, json_dir):
             for page_title in page_titles:
                 filename = str.join("_", [word\
                                        for word in re.split("\W", page_title.lower())\
-                                       if wounpersistrd != ""])
+                                       if word != ""])
                 filename_assoc[page_title] = filename
                 with open(json_dir + "{}.json".format(filename), "w") as fh:
                     pass
@@ -654,9 +654,9 @@ if __name__ == "__main__":
     plog(log_file_path, "END-TASK1")
 
     # STATISTICS1
-    plog(log_file_path, "BEGIN-STAT1")
-    collect_statistics1(spark, json_dir, data_dest_dir)
-    plog(log_file_path, "END-STAT1")
+    # plog(log_file_path, "BEGIN-STAT1")
+    # collect_statistics1(spark, json_dir, data_dest_dir)
+    # plog(log_file_path, "END-STAT1")
 
     # TASK2
     plog(log_file_path, "BEGIN-TASK2")
@@ -664,9 +664,9 @@ if __name__ == "__main__":
     plog(log_file_path, "END-TASK2")
 
     # STATISTICS2
-    plog(log_file_path, "BEGIN-STAT2")
-    collect_statistics2(spark, diffs_dir, data_dest_dir)
-    plog(log_file_path, "END-STAT2")
+    # plog(log_file_path, "BEGIN-STAT2")
+    # collect_statistics2(spark, diffs_dir, data_dest_dir)
+    # plog(log_file_path, "END-STAT2")
 
     # TASK3
     plog(log_file_path, "BEGIN-TASK3")
