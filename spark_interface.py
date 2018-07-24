@@ -6,13 +6,11 @@ import re
 import math
 import time
 
-#import parsewiki.lcs as lcsdiff
 import parsewiki.diff as tokendiff
 import cli_utils as cu
 import parsewiki.utils as pwu
 import dumpmanager as dm
 
-from nltk.corpus import stopwords
 from collections import OrderedDict
 from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession
@@ -22,16 +20,19 @@ from pyspark.sql.functions import size
 
 logging.getLogger().setLevel(logging.INFO)
 
+
 def plog(log_path, string):
     with open(log_path, "a+") as fh:
         fh.write("{} -- {}\n".format(string,\
-                                   str(time.time())))
+                                     str(time.time())))
 
-## functions for task1 ---------------------------
+# functions for task1 ----------------------------
+
 
 def jsonify(wiki_tuple):
     title, timestamp, contributor, page = wiki_tuple
     return pwu.wikipage_to_json(page, title, timestamp, contributor)
+
 
 def collect_heading(json_page):
     """Return a tuple (page_title, timestamp, json_page)
@@ -41,6 +42,7 @@ def collect_heading(json_page):
     title = page['title']
     timestamp = page['timestamp']
     return title, timestamp, json_page
+
 
 def dump_to_json(spark_session, dump_iter, json_dir):
     """Given a **function** to retrieve dumps (either
@@ -89,9 +91,8 @@ def dump_to_json(spark_session, dump_iter, json_dir):
             filename_assoc = {title:0 for title in page_titles}
             for page_title in page_titles:
                 filename = str.join("_", [word\
-                                       for word in re.split("\W",\
-                                                            page_title.lower())\
-                                       if word != ""])
+                                       for word in re.split("\W", page_title.lower())\
+                                       if wounpersistrd != ""])
                 filename_assoc[page_title] = filename
                 with open(json_dir + "{}.json".format(filename), "w") as fh:
                     pass
@@ -101,24 +102,18 @@ def dump_to_json(spark_session, dump_iter, json_dir):
                 filename = filename_assoc[page_title]
                 with open(json_dir + "{}.json".format(filename), "a") as fh:
                     fh.write(str(page[1]) + "\n")
-            # push pages to mongoDB alternatively
-            #try:
-            #    links = spark.createDataFrame(pair_rdd, ["page", "link"])
-            #    links.write.\
-            #        format("com.mongodb.spark.sql.DefaultSource")\
-            #        .mode("append")\
-            #        .save()
-            #except ValueError:
-            #    logging.warning("Empty RDD.")
 
 # end functions for task1 ------------------------
 
 # functions for task2 ----------------------------
+
+
 def arg_sort(iterable):
     """Return an array with the indexes that
     would make the given array sorted following
     the ascending order."""
     return sorted(range(len(iterable)), key=lambda x: iterable[x])
+
 
 def collect_page_elements(json_page):
     """Return a tuple (page, timestamp, text, location)
@@ -148,6 +143,7 @@ def collect_page_elements(json_page):
             results.append((title, timestamp, un_sp[0], un_sp[2]))
     return results
 
+
 def indexer(timestamp_list):
     """Given a timestamp_list, sort it in ascending
     order and associate to each element an increasing
@@ -165,6 +161,7 @@ def indexer(timestamp_list):
     for index in range(0, len(ts_list)):
         result.append((ts_list[index], index))
     return result
+
 
 def gen_pair_indexer(ts_index_pairs):
     """Given an entry containing a list
@@ -197,10 +194,11 @@ def gen_pair_indexer(ts_index_pairs):
         tss_index.append(ts_index)
 
     result = []
-    for ind in range(0, len(ts_index_pairs)-1):
+    for ind in range(0, len(ts_index_pairs) - 1):
         result.append((tss_index[ind], tss_index[ind + 1],\
                        tss_str[ind], tss_str[ind + 1]))
     return result
+
 
 def diff(entry):
     if entry[0][0] < entry[1][0]:
@@ -217,6 +215,7 @@ def diff(entry):
     # used tokendiff instead of lcsdiff
     return version_current, version_successive,\
         tuple(tokendiff.token_diff(sequence_current, sequence_successive))
+
 
 def compute_diff_set(spark_session, json_dir, diffs_dir):
     # TASK2
@@ -333,6 +332,7 @@ def compute_diff_set(spark_session, json_dir, diffs_dir):
 
 # functions to collect statistics ----------------
 
+
 def collect_page_links(json_page):
     """Return a tuple (page, link)
     for each link found in page."""
@@ -349,11 +349,13 @@ def collect_page_links(json_page):
             results.append((title, un_sp[1]))
     return results
 
+
 def collect_page_revision(json_page):
     page = json.loads(json_page)
     title = page['title']
     timestamp = page['timestamp']
     return title, timestamp
+
 
 def collect_statistics1(spark_session, json_dir, statistics_dir=None):
     """Retrieve the json pages obtain form task1 and
@@ -420,7 +422,7 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
         if links_rdd.isEmpty():
             links_rdd = page_revisions_rdd\
                         .map(lambda entry: (entry[0], 0))
-            
+
         # obtain (P, timestamp, text, location)
         unstruct_parts_rdd = json_text_rdd.flatMap(collect_page_elements)
         page_rev_tokens_rdd = unstruct_parts_rdd\
@@ -456,6 +458,7 @@ def collect_statistics1(spark_session, json_dir, statistics_dir=None):
 
 # begin functions to collect statistics2 ---------
 
+
 def count_page_diffs(diff_set):
     """Given a a diff-set, of the type (action, position, tokens)
     describing the difference set, count the number of
@@ -475,10 +478,12 @@ def count_page_diffs(diff_set):
             tokens_removed += len(tokens)
     return (num_ins, num_dels, tokens_added, tokens_removed)
 
+
 def merge_count_statistics(stat1, stat2):
     stat1 = list(stat1)
     stat2 = list(stat2)
     return tuple(stat1[i] + stat2[i] for i in range(0, len(stat1)))
+
 
 def collect_statistics2(spark_session, diffs_dir, statistics_dir=None):
     if statistics_dir is None:
@@ -526,6 +531,37 @@ def collect_statistics2(spark_session, diffs_dir, statistics_dir=None):
 
 # end functions to collect statistics 2 ----------
 
+# begin function to count entity (task 3) --------
+def count_entities_revison(spark_session, json_dir, count_dir):
+    json_files = [file_ for file_ in os.listdir(json_dir)\
+                  if file_[-5:] == ".json"]
+
+    for json_file in json_files:
+
+        # create an rdd of json strings
+        json_text_rdd = spark_session\
+                        .read\
+                        .text(json_dir + json_file)\
+                        .rdd\
+                        .map(lambda entry: entry.value)
+        links_rdd = json_text_rdd.flatMap(collect_links)
+        json_text_rdd.unpersist()
+        # use P1, P2, revision as key and associate multiple links
+        count_links = links_rdd\
+                      .map(lambda entry: ((entry[0], entry[1], entry[2]), 1))\
+                      .reduceByKey(lambda v1,v2: v1+v2)\
+                      .map(lambda entry: (entry[0][0], entry[0][2], entry[0][1], entry[1]))
+        # transform rdd to DF
+        count_df = count_links.toDF(count_schema)
+        count_links.unpersist()
+        
+        # write DF to json file
+        filename = json_file[:-5]
+        with open(count_dir + "{}_count.json".format(filename), "w") as fh:
+            for i in count_df.toJSON().collect():
+                fh.write(str(i) + "\n")
+
+
 def collect_links(json_page):
     """Return a tuple (page, timestamp, link)
     for each link found in page."""
@@ -542,100 +578,7 @@ def collect_links(json_page):
             results.append((title, timestamp, un_sp[1]))
     return results
 
-
-def collect_words(json_page):
-    """Return a tuple (page, timestamp, word)
-    for each word found in the unstructured part
-    of the page."""
-    results = []
-    words = set()
-    page = json.loads(json_page)
-    title = page['title']
-    timestamp = page['timestamp']
-    # unstructured_part: [word, link, position]
-    for un_sp in page['unstructured_part']:
-        words.add(un_sp[0])
-    if not len(words):
-        return [(title, timestamp, None)]
-    pwu.generate_stopwords()
-    filtered_words = pwu.remove_stopword(words)
-    for word in filtered_words:
-        results.append((title, timestamp, word))
-    return results
-
-def versions_diff(iterable):
-    """Given an iterable set containing timestamps
-    for the same page, order them according to the timestamp,
-    pick the timestamp two by two in sequence and compute
-    the diff over the token.
-
-    If words on a given location in two consecutive
-    timestamps are different than it means
-    that the word in the current timestamp has been
-    deleted and the word in the new timestamp has been
-    added.
-
-    Return:
-      A tuple
-      <current_timestamp, next_timestamp, action_type, word>.
-
-    Note:
-      This method is not actually the one we used, due to
-      its dumbness into noticing diffs.
-      In case of a single addition, this method would notice
-      diffs in each token following the effective diff element.
-
-      eg: "I like Trento" <--> "I really really like Trento"
-         diff-set: really really like Trento
-      Which is very imprecise. Eventually we opted to use
-      the difflib module provided by python.
-    """
-    list_iter = list(iterable)
-    timestamps = [value[0] for value in list_iter]
-
-    sorted_ts = arg_sort(timestamps)
-    version_pairs = [(sorted_ts[t], sorted_ts[t+1]) \
-                  for t in range(len(sorted_ts) - 1)]
-    results = []
-    for pair in version_pairs:
-        current_index, successive_index = pair
-        current = list_iter[current_index]
-        successive = list_iter[successive_index]
-        text_current = current[1]
-        text_successive = successive[1]
-        if text_current != text_successive:
-            results.append((current[0], successive[0], "INS", text_successive))
-            results.append((current[0], successive[0], "DEL", text_current))
-    return results
-
-def time_diff(iterable):
-    """Given an iterable set containing timestamps
-    for the same page, order them according to the timestamp,
-    pick the timestamp two by two in sequence and compute
-    the diff over the set of items they contain.
-
-    Return:
-      A tuple <timestamp, items_added, items_removed>
-      for each pair of timestamps considered.
-    """
-    list_iter = list(iterable)
-    timestamps = [value[0] for value in list_iter]
-
-    sorted_ts = arg_sort(timestamps)
-    diff_pairs = [(sorted_ts[t], sorted_ts[t+1]) \
-                  for t in range(len(sorted_ts) - 1)]
-    results = []
-    for pair in diff_pairs:
-        current_index, successive_index = pair
-        current = list_iter[current_index]
-        successive = list_iter[successive_index]
-        current_items = current[1]
-        successive_items = successive[1]
-        diff_title = current[0] + "->" + successive[0]
-        items_removed = list(set(current_items) - set(successive_items))
-        items_added = list(set(successive_items) - set(current_items))
-        results.append((diff_title, items_added, items_removed))
-    return results
+# end function to count entity (task 3)
 
 
 # These are the schema used to save (and later retrieve)
@@ -653,6 +596,12 @@ diff_schema = StructType([\
                      StructField("diff",\
                                  ArrayType(diff_elements_schema),\
                                  False)])
+
+count_schema = StructType([\
+                     StructField("P1", StringType(), False),\
+                     StructField("P2", StringType(), False),\
+                     StructField("revision", StringType(), False),\
+                     StructField("count", IntegerType(), False)])
 
 if __name__ == "__main__":
     """Divide the wikipedia source into chunks of several
@@ -677,9 +626,7 @@ if __name__ == "__main__":
         dump_dir = args.dump_dir
         get_dump = lambda: dm.get_offline_dump(dump_dir)
     else:
-        get_dump = lambda: dm.get_online_dump(wiki_version,\
-                                           max_dump,\
-                                           process_in_memory)
+        get_dump = lambda: dm.get_online_dump(wiki_version, max_dump, process_in_memory)
     if args.spark_conffile:
         with open(args.spark_conffile, "r") as conf_file:
             spark_configs = cu.get_config(conf_file)
@@ -693,97 +640,37 @@ if __name__ == "__main__":
     diffs_dir = data_dest_dir + "diffs_json/"
     if not os.path.exists(diffs_dir):
         os.makedirs(diffs_dir)
+    count_dir = data_dest_dir + "count_entity_json/"
+    if not os.path.exists(count_dir):
+        os.makedirs(count_dir)
 
     # TASK1
     log_file_path = data_dest_dir + "exec.log"
-    
+
     plog(log_file_path, "Start")
 
-    #plog(log_file_path, "BEGIN-TASK1")
-    #dump_to_json(spark, get_dump, json_dir)
-    #plog(log_file_path, "END-TASK1")
+    plog(log_file_path, "BEGIN-TASK1")
+    dump_to_json(spark, get_dump, json_dir)
+    plog(log_file_path, "END-TASK1")
 
     # STATISTICS1
-    #plog(log_file_path, "BEGIN-STAT1")
-    #collect_statistics1(spark, json_dir, data_dest_dir)
-    #plog(log_file_path, "END-STAT1")
+    plog(log_file_path, "BEGIN-STAT1")
+    collect_statistics1(spark, json_dir, data_dest_dir)
+    plog(log_file_path, "END-STAT1")
 
     # TASK2
-    #plog(log_file_path, "BEGIN-TASK2")
-    #compute_diff_set(spark, json_dir, diffs_dir)
-    #plog(log_file_path, "END-TASK2")
+    plog(log_file_path, "BEGIN-TASK2")
+    compute_diff_set(spark, json_dir, diffs_dir)
+    plog(log_file_path, "END-TASK2")
 
     # STATISTICS2
-    #plog(log_file_path, "BEGIN-STAT2")
-    #collect_statistics2(spark, diffs_dir, data_dest_dir)
-    #plog(log_file_path, "END-STAT2")
+    plog(log_file_path, "BEGIN-STAT2")
+    collect_statistics2(spark, diffs_dir, data_dest_dir)
+    plog(log_file_path, "END-STAT2")
 
-    plog(log_file_path, "End")
+    # TASK3
+    plog(log_file_path, "BEGIN-TASK3")
+    count_entities_revison(spark, json_dir, count_dir)
+    plog(log_file_path, "END-TASK3")
     
-    # TASK3:
-
-    # TODO:
-    # -----
-    #  1. TASK 3
-    #  2. Do the MongoDB Backup (Optional?)
-    #  3. More cleanup of the code (code not used)
-    #  3. Write the last part of the report (and finish it)
-    """
-    # TASK2.2: entity diff and word diff without location
-    for json_file in json_files:
-
-        # create an rdd of json strings
-        json_text_rdd = spark\
-                        .read\
-                        .text(json_dir + json_file)\
-                        .rdd\
-                        .map(lambda entry: entry.value)
-
-        links_rdd = json_text_rdd.flatMap(collect_links)
-        pair_links_rdd = links_rdd.map(lambda entry: ((entry[0], entry[1]),\
-                                       entry[2]))
-
-        # collect all links within a page in a single rdd
-        links_page_rdd = pair_links_rdd\
-                         .groupByKey()\
-                         .mapValues(lambda entry_values: list(entry_values))
-
-        # relax the structure and change the
-        # pair rdd key-value values
-        relaxed_rdd = links_page_rdd.map(lambda entry:\
-                                         (entry[0][0], entry[0][1], entry[1]))
-
-        # the new pair rdd will have the following structure:
-        # <page, <timestamp, words>>
-        page_versions_rdd = relaxed_rdd.map(lambda entry:\
-                                            (entry[0], (entry[1], entry[2])))
-        links_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
-
-        # WORDS DIFF
-        # select all the words within a page and
-        # build a large tuple set
-        words_rdd = json_text_rdd.flatMap(collect_words)
-        pair_words_rdd = words_rdd.map(lambda entry:\
-                                       ((entry[0], entry[1]), entry[2]))
-        # collect all words within a page in a single rdd
-        words_page_rdd = pair_words_rdd.groupByKey()\
-                             .mapValues(lambda entry_values: list(entry_values))
-        # relax the structure and change the
-        # pair rdd key-value values
-        relaxed_rdd = words_page_rdd.map(lambda entry:\
-                                         (entry[0][0], entry[0][1], entry[1]))
-        # the new pair rdd will have the following structure:
-        # <page, <timestamp, words>>
-        page_versions_rdd = relaxed_rdd.map(lambda entry:\
-                                            (entry[0], (entry[1], entry[2])))
-        words_diff_rdd = page_versions_rdd.groupByKey().flatMapValues(time_diff)
-
-        filename = json_file[:-5]
-        with open("/tmp/diff2_{}.txt".format(filename), "w") as fh:
-                for i in links_diff_rdd.collect():
-                    fh.write(str(i) + "\n")
-
-        with open("/tmp/diff2_{}.txt".format(filename), "w") as fh:
-            for i in words_diff_rdd.collect():
-                fh.write(str(i) + "\n")
-    """
+    plog(log_file_path, "End")

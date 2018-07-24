@@ -3,7 +3,6 @@ import logging
 import xml.etree.ElementTree as ET
 import parsewiki.parsepage as pp
 
-stopwords_all = []
 
 def split_bzip2(bzip2_file, num_pages, max_iteration, file_prefix="chunks_"):
     """Given a bz2 file, split it into several bz2 files,
@@ -130,34 +129,6 @@ def wikipage_to_json(wikitext, title=None, timestamp=None, contributor=None):
     content = pp.pfh.parse(wikitext)
     mw_page = pp.Page.parse_page(content, title, timestamp, contributor)
     return mw_page.to_json()
-
-
-def generate_stopwords():
-    global stopwords_all
-    stopwords = ["i", "me", "my", "myself", "we", "our", "ours", "ourselves",
-                 "you", "your", "yours", "yourself", "yourselves", "he", "him",
-                 "his", "himself", "she", "her", "hers", "herself", "it", "its",
-                 "itself", "they", "them", "their", "theirs", "themselves", "what",
-                 "which", "who", "whom", "this", "that", "these", "those", "am",
-                 "is", "are", "was", "were", "be", "been", "being", "have", "has",
-                 "had", "having", "do", "does", "did", "doing", "a", "an", "the",
-                 "and", "but", "if", "or", "because", "as", "until", "while",
-                 "of", "at", "by", "for", "with", "about", "against", "between",
-                 "into", "through", "during", "before", "after", "above", "below",
-                 "to", "from", "up", "down", "in", "out", "on", "off", "over",
-                 "under", "again", "further", "then", "once", "here", "there",
-                 "when", "where", "why", "how", "all", "any", "both", "each",
-                 "few", "more", "most", "other", "some", "such", "no", "nor",
-                 "not", "only", "own", "same", "so", "than", "too", "very",
-                 "s", "t", "can", "will", "just", "don", "should", "now"]
-    for i in stopwords:
-        stopwords_all.append(i)
-        stopwords_all.append(i.capitalize())
-        stopwords_all.append(i.upper())
-
-
-def remove_stopword(words):
-    return words - set(stopwords_all)
 
 
 def get_wikipedia_chunk(bzip2_source, max_numpage=5, max_iteration=1):
