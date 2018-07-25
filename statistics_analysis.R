@@ -19,7 +19,7 @@ gen_bins <- function(data, buckets) {
   return(bins)
 }
 
-draw_barplot <- function(data, bin_intervals, xlab, ylab) {
+draw_barplot <- function(data, bin_intervals, xlab, ylab, axis_interleaving) {
   bins <- gen_bins(data, bin_intervals)
   tab <- table(bins)
   barplot(tab,
@@ -29,8 +29,7 @@ draw_barplot <- function(data, bin_intervals, xlab, ylab) {
           cex.names = 1.3,
           cex.lab = 1.5,
           cex.axis = 1.3)
-  axis(2, at= seq(0, max(tab), by = 5))
-  
+  axis(2, at= seq(0, max(tab), by = axis_interleaving))
 }
 
 data <- read.csv("statistics.csv", sep = ",", header = T,
@@ -51,12 +50,15 @@ pdf("statistics1.pdf",
 par(mfrow=c(3,1))
 
 draw_barplot(revs/100, revs_intervals/100,
-             "revisions per page (times 100)", "number of pages")
+             "revisions per page (times 100)", "number of pages",
+             5)
 draw_barplot(links/100, links_intervals/100,
-            "links per page (times 100)", "number of pages")
+            "links per page (times 100)", "number of pages",
+            10)
 draw_barplot(avg_tokens/1000, avgtok_intervals/1000,
              "avg. tokens per page (times 1000)",
-             "number of pages")
+             "number of pages",
+             10)
 dev.off()
 
 cat("File statistics1.pdf printed!\n")
@@ -90,10 +92,14 @@ hist(del_ratio,
 dev.off()
 cat("File statistics2a.pdf printed!\n")
 
-cat("\ntot pages: ")
+cat("\nTotal number of pages,")
 cat(nrow(data))
-cat("\ntot revisions:")
+cat("\nTotal number of revisions,")
 cat(sum(data$revs))
-cat("\naverage number of tokens: ")
-cat(mean(data$avg_tokens))
+cat("\nAverage number of tokens,")
+cat(floor(mean(data$avg_tokens)))
+cat("\nAverage number of links,")
+cat(floor(mean(data$links)))
+cat("\nAverage number of revisions,")
+cat(floor(mean(data$revs)))
 cat("\n\n")
