@@ -84,7 +84,7 @@ def dump_to_json(spark_session, dump_iter, json_dir):
             json_pages = json_heading_rdd\
                          .map(lambda entry: ((entry[0], entry[1]), entry[2]))\
                          .sortByKey()\
-                         .saveAsTextFile("/tmp/prova.json")
+                         .collect()
             json_heading_rdd.unpersist()
 
             # create (flushing) a new file for each page
@@ -96,12 +96,12 @@ def dump_to_json(spark_session, dump_iter, json_dir):
                 filename_assoc[page_title] = filename
                 with open(json_dir + "{}.json".format(filename), "w") as fh:
                     pass
-            # 
-            # for page in json_pages:
-            #     page_title = page[0][0]
-            #     filename = filename_assoc[page_title]
-            #     with open(json_dir + "{}.json".format(filename), "a") as fh:
-            #         fh.write(str(page[1]) + "\n")
+
+            for page in json_pages:
+                page_title = page[0][0]
+                filename = filename_assoc[page_title]
+                with open(json_dir + "{}.json".format(filename), "a") as fh:
+                    fh.write(str(page[1]) + "\n")
 
 # end functions for task1 ------------------------
 
@@ -654,23 +654,23 @@ if __name__ == "__main__":
     plog(log_file_path, "END-TASK1")
 
     # STATISTICS1
-    # plog(log_file_path, "BEGIN-STAT1")
-    # collect_statistics1(spark, json_dir, data_dest_dir)
-    # plog(log_file_path, "END-STAT1")
+    plog(log_file_path, "BEGIN-STAT1")
+    collect_statistics1(spark, json_dir, data_dest_dir)
+    plog(log_file_path, "END-STAT1")
 
-    # # TASK2
-    # plog(log_file_path, "BEGIN-TASK2")
-    # compute_diff_set(spark, json_dir, diffs_dir)
-    # plog(log_file_path, "END-TASK2")
-    # 
-    # # STATISTICS2
-    # # plog(log_file_path, "BEGIN-STAT2")
-    # # collect_statistics2(spark, diffs_dir, data_dest_dir)
-    # # plog(log_file_path, "END-STAT2")
-    # 
-    # # TASK3
-    # plog(log_file_path, "BEGIN-TASK3")
-    # count_entities_revison(spark, json_dir, count_dir)
-    # plog(log_file_path, "END-TASK3")
+    # TASK2
+    plog(log_file_path, "BEGIN-TASK2")
+    compute_diff_set(spark, json_dir, diffs_dir)
+    plog(log_file_path, "END-TASK2")
+
+    # STATISTICS2
+    plog(log_file_path, "BEGIN-STAT2")
+    collect_statistics2(spark, diffs_dir, data_dest_dir)
+    plog(log_file_path, "END-STAT2") 
+
+    # TASK3
+    plog(log_file_path, "BEGIN-TASK3")
+    count_entities_revison(spark, json_dir, count_dir)
+    plog(log_file_path, "END-TASK3")
     
     plog(log_file_path, "End")
