@@ -1,3 +1,6 @@
+.RData
+*.pdf
+*.csv
 # emacs
 *~
 
