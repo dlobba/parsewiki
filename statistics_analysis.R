@@ -70,6 +70,8 @@ dels <- data$dels[data$dels != 0]
 ins_ratio <- revs_ins / (revs_ins + inss)
 del_ratio <- revs_del / (revs_del + dels)
 
+del_ins_ratio <- data$removed_tokens / data$added_tokens
+
 pdf("statistics2a.pdf",
     width = 5,
     height = 6)
@@ -91,6 +93,17 @@ hist(del_ratio,
      cex.main = 1.5)
 dev.off()
 cat("File statistics2a.pdf printed!\n")
+
+pdf("statistics2b.pdf")
+hist(del_ins_ratio,
+     breaks = seq(0, round(max(del_ins_ratio) + 0.1, 2), by = 0.05),
+     main = "",
+     xlab = "Ratio deletions/insertions",
+     cex.lab = 1.5,
+     cex.axis = 1.3,
+     cex.main = 1.5)
+dev.off()
+cat("File statistics2b.pdf printed!\n")
 
 cat("\nTotal number of pages,")
 cat(nrow(data))
